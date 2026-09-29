@@ -82,3 +82,36 @@ fn settings_roundtrip() {
     db.set_setting("window.maximized", &false).unwrap();
     assert!(!db.get_setting::<bool>("window.maximized").unwrap().unwrap());
 }
+
+#[cfg(unix)]
+#[test]
+fn file_and_dir_permissions_are_restrictive() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!(
+        "adjutant-perm-test-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let db_path = root.join("nested").join("adjutant.db");
+    let db = Db::open(&db_path).expect("open");
+
+    let dir_mode = std::fs::metadata(root.join("nested"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    let file_mode = std::fs::metadata(&db_path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(dir_mode, 0o700, "dir mode");
+    assert_eq!(file_mode, 0o600, "file mode");
+
+    // Sanity: migrations ran on the on-disk DB too.
+    let version: i64 = db
+        .conn()
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 1);
+
+    drop(db);
+    let _ = std::fs::remove_dir_all(&root);
+}
