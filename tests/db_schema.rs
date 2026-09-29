@@ -1,4 +1,5 @@
 //! Schema + migration runner smoke tests (Step 2).
+#![allow(clippy::unwrap_used)]
 
 use adjutant::db::Db;
 
@@ -28,7 +29,10 @@ fn fresh_db_has_all_tables_and_user_version_1() {
         v
     };
     for expected in ["entity_links", "settings", "todo_groups", "todos"] {
-        assert!(tables.iter().any(|t| t == expected), "missing table {expected}");
+        assert!(
+            tables.iter().any(|t| t == expected),
+            "missing table {expected}"
+        );
     }
 }
 

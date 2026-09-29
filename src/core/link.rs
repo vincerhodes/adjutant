@@ -163,7 +163,10 @@ impl<'a> LinkStore<'a> {
 
     /// Remove every link touching `entity` (both directions). Called in the
     /// same transaction as a hard delete of the entity row.
-    pub fn delete_links_for(conn: &Connection, entity: &EntityRef) -> std::result::Result<usize, DbError> {
+    pub fn delete_links_for(
+        conn: &Connection,
+        entity: &EntityRef,
+    ) -> std::result::Result<usize, DbError> {
         Ok(conn.execute(
             "DELETE FROM entity_links
              WHERE (source_type = ?1 AND source_id = ?2)
@@ -180,11 +183,7 @@ impl<'a> LinkStore<'a> {
         Self::would_cycle_conn(conn, src, tgt)
     }
 
-    fn would_cycle_conn(
-        conn: &Connection,
-        src: &EntityRef,
-        tgt: &EntityRef,
-    ) -> Result<bool> {
+    fn would_cycle_conn(conn: &Connection, src: &EntityRef, tgt: &EntityRef) -> Result<bool> {
         // Recursive CTE walks tgt's outgoing 'blocks' edges; src reachable → cycle.
         let reachable: bool = conn.query_row(
             "WITH RECURSIVE walk (kind, id) AS (
@@ -219,14 +218,21 @@ impl<'a> LinkStore<'a> {
             let target_id: String = row.get(4)?;
             let relation: String = row.get(5)?;
             Ok(Link {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
                         0,
                         rusqlite::types::Type::Text,
                         Box::new(e),
-                    ))?,
-                source: EntityRef::new(source_type.parse().map_err(to_sql_err)?, parse_uuid(&source_id)?),
-                target: EntityRef::new(target_type.parse().map_err(to_sql_err)?, parse_uuid(&target_id)?),
+                    )
+                })?,
+                source: EntityRef::new(
+                    source_type.parse().map_err(to_sql_err)?,
+                    parse_uuid(&source_id)?,
+                ),
+                target: EntityRef::new(
+                    target_type.parse().map_err(to_sql_err)?,
+                    parse_uuid(&target_id)?,
+                ),
                 relation: Relation::from(relation.as_str()),
                 created_at: row.get(6)?,
             })

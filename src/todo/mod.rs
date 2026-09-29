@@ -77,10 +77,10 @@ impl<'a> TodoStore<'a> {
     }
 
     pub fn list_groups(&self) -> Result<Vec<TodoGroup>> {
-        let mut stmt = self
-            .conn()
-            .prepare("SELECT id, name, position, created_at, updated_at
-                      FROM todo_groups ORDER BY position, created_at")?;
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, position, created_at, updated_at
+                      FROM todo_groups ORDER BY position, created_at",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok(TodoGroup {
                 id: parse_uuid(&row.get::<_, String>(0)?)?,
@@ -122,19 +122,17 @@ impl<'a> TodoStore<'a> {
             let ent = EntityRef::new(EntityType::Todo, parse_uuid(raw)?);
             LinkStore::delete_links_for(&tx, &ent)?;
         }
-        tx.execute("DELETE FROM todo_groups WHERE id = ?1", params![id.to_string()])?;
+        tx.execute(
+            "DELETE FROM todo_groups WHERE id = ?1",
+            params![id.to_string()],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
     // ── Todos: CRUD ───────────────────────────────────────────────────────
 
-    pub fn create(
-        &self,
-        group_id: Uuid,
-        parent_id: Option<Uuid>,
-        title: &str,
-    ) -> Result<Todo> {
+    pub fn create(&self, group_id: Uuid, parent_id: Option<Uuid>, title: &str) -> Result<Todo> {
         let id = Uuid::new_v4();
         let now = Utc::now().to_rfc3339();
         let pos: i64 = self.conn().query_row(
@@ -269,7 +267,10 @@ impl<'a> TodoStore<'a> {
                  ORDER BY position, created_at, id",
             )?;
             let rows = stmt.query_map(
-                params![todo.group_id.to_string(), todo.parent_id.map(|p| p.to_string())],
+                params![
+                    todo.group_id.to_string(),
+                    todo.parent_id.map(|p| p.to_string())
+                ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
             )?;
             for r in rows {
@@ -292,8 +293,14 @@ impl<'a> TodoStore<'a> {
         if let Some(other) = swap_with {
             let (a_id, a_pos) = &siblings[idx];
             let (b_id, b_pos) = &siblings[other];
-            tx.execute("UPDATE todos SET position = ?2 WHERE id = ?1", params![b_id, a_pos])?;
-            tx.execute("UPDATE todos SET position = ?2 WHERE id = ?1", params![a_id, b_pos])?;
+            tx.execute(
+                "UPDATE todos SET position = ?2 WHERE id = ?1",
+                params![b_id, a_pos],
+            )?;
+            tx.execute(
+                "UPDATE todos SET position = ?2 WHERE id = ?1",
+                params![a_id, b_pos],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -344,6 +351,25 @@ impl<'a> TodoStore<'a> {
              ORDER BY deleted_at DESC",
         )?;
         let rows = stmt.query_map([], |row| self.todo_from_row(row))?;
+        collect(rows)
+    }
+
+    /// Case-insensitive live title search (used by the "Blocked by" picker).
+    /// `exclude` (and its subtree) never appear in results.
+    pub fn search(&self, needle: &str, exclude: Option<Uuid>) -> Result<Vec<Todo>> {
+        let pattern = format!("%{}%", needle.to_lowercase());
+        let mut stmt = self.conn().prepare(
+            "SELECT id, group_id, parent_id, title, notes, status, priority,
+                    position, due_date, deleted_at, created_at, updated_at, completed_at
+             FROM todos
+             WHERE deleted_at IS NULL AND lower(title) LIKE ?1
+               AND (?2 IS NULL OR id != ?2)
+             ORDER BY title
+             LIMIT 20",
+        )?;
+        let rows = stmt.query_map(params![pattern, exclude.map(|e| e.to_string())], |row| {
+            self.todo_from_row(row)
+        })?;
         collect(rows)
     }
 
@@ -461,7 +487,7 @@ impl<'a> TodoStore<'a> {
 
     /// Live descendant count including `id` itself (UI delete confirm).
     pub fn live_subtree_count(&self, id: Uuid) -> Result<usize> {
-        Ok(self.open_subtree_count(id)?)
+        self.open_subtree_count(id)
     }
 
     fn open_subtree_count(&self, id: Uuid) -> Result<usize> {
@@ -559,11 +585,14 @@ fn build_tree(all: &[Todo]) -> Vec<TodoNode> {
 }
 
 fn parse_uuid(s: &str) -> rusqlite::Result<Uuid> {
-    Uuid::parse_str(s)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+    Uuid::parse_str(s).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })
 }
 
-fn collect<T>(rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>) -> Result<Vec<T>> {
+fn collect<T>(
+    rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
+) -> Result<Vec<T>> {
     let mut v = Vec::new();
     for r in rows {
         v.push(r?);

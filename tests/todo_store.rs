@@ -1,11 +1,11 @@
 //! Todo store integration tests against an in-memory database.
+#![allow(clippy::unwrap_used)]
 
 use adjutant::core::entity::{EntityRef, EntityType};
 use adjutant::core::link::{LinkStore, Relation};
 use adjutant::db::Db;
 use adjutant::todo::{Status, TodoError, TodoStore};
 use chrono::{Duration, NaiveDate, Utc};
-use uuid::Uuid;
 
 fn mem_db() -> Db {
     Db::open(std::path::Path::new(":memory:")).expect("in-memory db")
@@ -19,15 +19,30 @@ fn groups_crud_and_ordering() {
     let b = store.create_group("Browzr").unwrap();
     store.create_group("Hobby").unwrap();
 
-    let names: Vec<String> = store.list_groups().unwrap().into_iter().map(|g| g.name).collect();
+    let names: Vec<String> = store
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
     assert_eq!(names, ["Personal", "Browzr", "Hobby"]);
 
     store.rename_group(b.id, "Browzr Ltd").unwrap();
-    let names: Vec<String> = store.list_groups().unwrap().into_iter().map(|g| g.name).collect();
+    let names: Vec<String> = store
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
     assert_eq!(names, ["Personal", "Browzr Ltd", "Hobby"]);
 
     store.delete_group(b.id).unwrap();
-    let names: Vec<String> = store.list_groups().unwrap().into_iter().map(|g| g.name).collect();
+    let names: Vec<String> = store
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
     assert_eq!(names, ["Personal", "Hobby"]);
 }
 
@@ -109,7 +124,9 @@ fn due_date_set_clear_and_overdue() {
 
     // A future date is not overdue.
     let tomorrow: NaiveDate = Utc::now().date_naive() + Duration::days(1);
-    store.update(t.id, None, None, None, Some(Some(tomorrow))).unwrap();
+    store
+        .update(t.id, None, None, None, Some(Some(tomorrow)))
+        .unwrap();
     assert!(store.overdue().unwrap().is_empty());
 }
 
@@ -126,7 +143,9 @@ fn trash_hides_from_tree_restore_keeps_everything() {
     // Link child → other; trash must retain links.
     let child_ref = EntityRef::new(EntityType::Todo, child.id);
     let other_ref = EntityRef::new(EntityType::Todo, other.id);
-    links.link(&child_ref, &other_ref, &Relation::blocks()).unwrap();
+    links
+        .link(&child_ref, &other_ref, &Relation::blocks())
+        .unwrap();
 
     store.trash(parent.id).unwrap();
 
@@ -159,7 +178,9 @@ fn permanent_delete_removes_rows_and_links() {
 
     let child_ref = EntityRef::new(EntityType::Todo, child.id);
     let parent_ref = EntityRef::new(EntityType::Todo, parent.id);
-    links.link(&child_ref, &parent_ref, &Relation::blocks()).unwrap();
+    links
+        .link(&child_ref, &parent_ref, &Relation::blocks())
+        .unwrap();
 
     store.trash(parent.id).unwrap();
     store.delete_permanent(parent.id).unwrap();
@@ -251,7 +272,9 @@ fn updated_at_trigger_fires_on_update_not_insert() {
 
     // Give the trigger a distinguishable later moment.
     std::thread::sleep(std::time::Duration::from_millis(20));
-    let updated = store.update(t.id, Some("renamed"), None, None, None).unwrap();
+    let updated = store
+        .update(t.id, Some("renamed"), None, None, None)
+        .unwrap();
     assert_ne!(updated.created_at, updated.updated_at);
     assert_eq!(updated.title, "renamed");
 }

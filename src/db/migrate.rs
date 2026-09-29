@@ -8,17 +8,20 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::DbError;
 
-const MIGRATIONS: &[(&str, &str)] = &[("0001_init", include_str!("../../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] =
+    &[("0001_init", include_str!("../../migrations/0001_init.sql"))];
 
 pub fn run(conn: &Connection) -> Result<(), DbError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     for (version, (name, sql)) in MIGRATIONS.iter().enumerate() {
-        let version = i64::try_from(version + 1).map_err(|_| DbError::Migration("version overflow".into()))?;
+        let version = i64::try_from(version + 1)
+            .map_err(|_| DbError::Migration("version overflow".into()))?;
         if version <= current {
             continue;
         }
         let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(sql).map_err(|e| DbError::Migration(format!("{name}: {e}")))?;
+        tx.execute_batch(sql)
+            .map_err(|e| DbError::Migration(format!("{name}: {e}")))?;
         tx.pragma_update(None, "user_version", version)
             .map_err(|e| DbError::Migration(format!("{name}: bump user_version: {e}")))?;
         tx.commit()

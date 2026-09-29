@@ -1,4 +1,5 @@
 //! Link layer integration tests against an in-memory database.
+#![allow(clippy::unwrap_used)]
 
 use adjutant::core::entity::{EntityRef, EntityType};
 use adjutant::core::link::{LinkStore, Relation};
@@ -52,10 +53,7 @@ fn duplicate_link_rejected() {
     let b = todo_ref();
     links.link(&a, &b, &Relation::blocks()).unwrap();
     let err = links.link(&a, &b, &Relation::blocks()).unwrap_err();
-    assert!(matches!(
-        err,
-        adjutant::core::link::LinkError::Duplicate
-    ));
+    assert!(matches!(err, adjutant::core::link::LinkError::Duplicate));
 }
 
 #[test]
@@ -67,7 +65,7 @@ fn blocks_cycle_rejected() {
     let c = todo_ref();
     links.link(&a, &b, &Relation::blocks()).unwrap(); // a blocks b
     links.link(&b, &c, &Relation::blocks()).unwrap(); // b blocks c
-    // c → a would close a→b→c→a.
+                                                      // c → a would close a→b→c→a.
     let err = links.link(&c, &a, &Relation::blocks()).unwrap_err();
     assert!(matches!(err, adjutant::core::link::LinkError::Cycle));
 
@@ -92,9 +90,13 @@ fn mentions_cycles_allowed() {
     let links = LinkStore::new(&db);
     let a = todo_ref();
     let b = todo_ref();
-    links.link(&a, &b, &Relation::from(Relation::MENTIONS)).unwrap();
+    links
+        .link(&a, &b, &Relation::from(Relation::MENTIONS))
+        .unwrap();
     // Cyclic mention is fine.
-    links.link(&b, &a, &Relation::from(Relation::MENTIONS)).unwrap();
+    links
+        .link(&b, &a, &Relation::from(Relation::MENTIONS))
+        .unwrap();
     assert_eq!(links.links_from(&a).unwrap().len(), 1);
     assert_eq!(links.links_from(&b).unwrap().len(), 1);
 }
@@ -119,7 +121,10 @@ fn custom_relation_roundtrip() {
     let b = todo_ref();
     let rel = Relation::custom("related_to");
     links.link(&a, &b, &rel).unwrap();
-    assert_eq!(links.links_from(&a).unwrap()[0].relation.as_str(), "related_to");
+    assert_eq!(
+        links.links_from(&a).unwrap()[0].relation.as_str(),
+        "related_to"
+    );
 }
 
 #[test]
@@ -129,6 +134,8 @@ fn mixed_relations_same_pair_coexist() {
     let a = todo_ref();
     let b = todo_ref();
     links.link(&a, &b, &Relation::blocks()).unwrap();
-    links.link(&a, &b, &Relation::from(Relation::MENTIONS)).unwrap();
+    links
+        .link(&a, &b, &Relation::from(Relation::MENTIONS))
+        .unwrap();
     assert_eq!(links.links_from(&a).unwrap().len(), 2);
 }
