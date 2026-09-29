@@ -1,1 +1,3 @@
-// Library crate; modules land per milestone steps.
+//! Adjutant library crate. The binary (`main.rs`) is a thin bootstrap over this.
+
+pub mod db;
