@@ -8,6 +8,9 @@
 use egui::{Context, Key, Modifiers, RichText, Ui, ViewportCommand};
 use uuid::Uuid;
 
+use crate::calendar::notify::{DesktopNotifier, Notifier};
+use crate::calendar::reminders::{ReminderScheduler, TICK_INTERVAL};
+use crate::calendar::CalendarStore;
 use crate::db::Db;
 use crate::email::sync::{live_factories, SyncEngine};
 use crate::email::ui::EmailUi;
@@ -54,6 +57,10 @@ pub struct AdjutantApp {
     toasts: Vec<String>,
     maximized_on_startup: bool,
     first_frame: bool,
+    reminders: ReminderScheduler,
+    reminder_notifier: Box<dyn Notifier>,
+    next_reminder_tick: Option<std::time::Instant>,
+    reminders_booted: bool,
 }
 
 impl AdjutantApp {
@@ -121,6 +128,10 @@ impl AdjutantApp {
             toasts: Vec::new(),
             maximized_on_startup: maximized,
             first_frame: true,
+            reminders: ReminderScheduler::new(),
+            reminder_notifier: Box::new(DesktopNotifier),
+            next_reminder_tick: None,
+            reminders_booted: false,
         }
     }
 
@@ -190,6 +201,33 @@ impl AdjutantApp {
             let _ = self.db.set_setting(SETTINGS_LAST_GROUP, &group.to_string());
         }
     }
+
+    /// Reminder scheduler: catch-up on launch, then a ~15s tick. Fired
+    /// reminders surface as toasts; failures are logged, never fatal.
+    fn run_reminders(&mut self) {
+        let due = match self.next_reminder_tick {
+            None => true,
+            Some(at) => std::time::Instant::now() >= at,
+        };
+        if !due {
+            return;
+        }
+        let store = CalendarStore::new(&self.db);
+        let now = chrono::Utc::now();
+        let result = if self.reminders_booted {
+            self.reminders
+                .tick(&store, &mut *self.reminder_notifier, now)
+        } else {
+            self.reminders_booted = true;
+            self.reminders
+                .catch_up(&store, &mut *self.reminder_notifier, now)
+        };
+        match result {
+            Ok(fired) => self.toasts.extend(fired),
+            Err(e) => eprintln!("adjutant: reminder scheduler: {e:#}"),
+        }
+        self.next_reminder_tick = Some(std::time::Instant::now() + TICK_INTERVAL);
+    }
 }
 
 impl eframe::App for AdjutantApp {
@@ -211,6 +249,7 @@ impl eframe::App for AdjutantApp {
             }
         }
         self.handle_global_keys(ctx);
+        self.run_reminders();
         // Esc exits focus mode — unless an editor, the filter, a modal, or
         // the help overlay is active (they own Esc). Editing state is from
         // the previous frame, so Esc that clears a filter won't also exit.

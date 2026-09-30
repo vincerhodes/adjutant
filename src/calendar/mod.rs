@@ -7,6 +7,7 @@
 
 pub mod model;
 pub mod notify;
+pub mod reminders;
 pub mod rrule;
 
 use std::collections::HashMap;
@@ -49,6 +50,9 @@ pub enum CalendarError {
 }
 
 pub type Result<T> = std::result::Result<T, CalendarError>;
+
+/// Trashed-event purge grace period, matching the todo rule (spec §3).
+const PURGE_AGE: Duration = Duration::days(30);
 
 pub struct CalendarStore<'a> {
     db: &'a Db,
@@ -334,16 +338,43 @@ impl<'a> CalendarStore<'a> {
             "SELECT id, event_id, offset_minutes, created_at, updated_at
              FROM calendar_reminders WHERE event_id = ?1 ORDER BY offset_minutes",
         )?;
-        let rows = stmt.query_map(params![event_id.to_string()], |row| {
-            Ok(Reminder {
-                id: parse_uuid(&row.get::<_, String>(0)?)?,
-                event_id: parse_uuid(&row.get::<_, String>(1)?)?,
-                offset_minutes: row.get(2)?,
-                created_at: dt(&row.get::<_, String>(3)?)?,
-                updated_at: dt(&row.get::<_, String>(4)?)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![event_id.to_string()], map_reminder_row)?;
         collect(rows)
+    }
+
+    /// Live events that have at least one reminder, with their reminders —
+    /// the scheduler's working set. Trashed events are excluded (spec §8.5).
+    pub fn events_with_reminders(&self) -> Result<Vec<(Event, Vec<Reminder>)>> {
+        let mut events = self.base_events(
+            "trashed_at IS NULL AND id IN (SELECT DISTINCT event_id FROM calendar_reminders)",
+            &[],
+        )?;
+        self.attach_relations(&mut events)?;
+        let ids: Vec<String> = events.iter().map(|e| e.id.to_string()).collect();
+        let mut by_event: HashMap<Uuid, Vec<Reminder>> = HashMap::new();
+        if !ids.is_empty() {
+            let placeholders = repeat_vars(ids.len());
+            let sql = format!(
+                "SELECT id, event_id, offset_minutes, created_at, updated_at
+                 FROM calendar_reminders WHERE event_id IN ({placeholders})"
+            );
+            let mut stmt = self.conn().prepare(&sql)?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(ids.iter().map(|s| s.as_str())),
+                map_reminder_row,
+            )?;
+            for r in collect(rows)? {
+                by_event.entry(r.event_id).or_default().push(r);
+            }
+        }
+        Ok(events
+            .into_iter()
+            .map(|e| {
+                let mut rs = by_event.remove(&e.id).unwrap_or_default();
+                rs.sort_by_key(|r| r.offset_minutes);
+                (e, rs)
+            })
+            .collect())
     }
 
     pub fn add_reminder(&self, event_id: Uuid, offset_minutes: i64) -> Result<Uuid> {
@@ -439,7 +470,9 @@ impl<'a> CalendarStore<'a> {
 
     pub fn snooze_fire(&self, fire_id: Uuid, to: DateTime<Utc>) -> Result<()> {
         let n = self.conn().execute(
-            "UPDATE calendar_reminder_fires SET snoozed_to_utc = ?2 WHERE id = ?1",
+            "UPDATE calendar_reminder_fires
+             SET snoozed_to_utc = ?2, fired_at = NULL
+             WHERE id = ?1",
             params![fire_id.to_string(), to.to_rfc3339()],
         )?;
         if n == 0 {
@@ -492,6 +525,39 @@ impl<'a> CalendarStore<'a> {
             .map(|s| parse_uuid_str(&s))
             .transpose()?
             .ok_or_else(|| CalendarError::Corrupt("fire row vanished after upsert".into()))
+    }
+
+    /// Hard-delete events trashed more than 30 days ago (startup purge,
+    /// same rule as todos). Links are purged in the same transaction;
+    /// attendees/exceptions/reminders/fires cascade via FK.
+    pub fn purge_expired(&self) -> Result<usize> {
+        let cutoff = (Utc::now() - PURGE_AGE).to_rfc3339();
+        let tx = self.conn().unchecked_transaction()?;
+        let ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM calendar_events WHERE trashed_at IS NOT NULL AND trashed_at < ?1",
+            )?;
+            let rows = stmt.query_map(params![cutoff], |row| row.get(0))?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+        for raw in &ids {
+            if let Ok(uuid) = Uuid::parse_str(raw) {
+                let ent = EntityRef::new(EntityType::Event, uuid);
+                LinkStore::delete_links_for(&tx, &ent)?;
+            }
+        }
+        {
+            let mut stmt = tx.prepare("DELETE FROM calendar_events WHERE id = ?1")?;
+            for raw in &ids {
+                stmt.execute(params![raw])?;
+            }
+        }
+        tx.commit()?;
+        Ok(ids.len())
     }
 
     // ── internals ─────────────────────────────────────────────────────────
@@ -845,6 +911,16 @@ fn dt(s: &str) -> rusqlite::Result<DateTime<Utc>> {
                 format!("bad timestamp {s:?}: {e}").into(),
             )
         })
+}
+
+fn map_reminder_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reminder> {
+    Ok(Reminder {
+        id: parse_uuid(&row.get::<_, String>(0)?)?,
+        event_id: parse_uuid(&row.get::<_, String>(1)?)?,
+        offset_minutes: row.get(2)?,
+        created_at: dt(&row.get::<_, String>(3)?)?,
+        updated_at: dt(&row.get::<_, String>(4)?)?,
+    })
 }
 
 fn parse_uuid(s: &str) -> rusqlite::Result<Uuid> {

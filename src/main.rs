@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use std::sync::Mutex;
 
 use adjutant::app::AdjutantApp;
+use adjutant::calendar::CalendarStore;
 use adjutant::db::Db;
 use adjutant::todo::TodoStore;
 
@@ -46,6 +47,11 @@ fn main() -> ExitCode {
         Ok(0) => {}
         Ok(n) => println!("adjutant: purged {n} expired trashed todo(s)"),
         Err(e) => eprintln!("adjutant: trash purge failed: {e:#}"),
+    }
+    match CalendarStore::new(&db).purge_expired() {
+        Ok(0) => {}
+        Ok(n) => println!("adjutant: purged {n} expired trashed event(s)"),
+        Err(e) => eprintln!("adjutant: calendar trash purge failed: {e:#}"),
     }
 
     let options = eframe::NativeOptions {

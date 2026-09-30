@@ -452,23 +452,28 @@ fn reminder_fire_snooze_dismiss_cycle() {
     store.mark_fired(fire_id, now).unwrap();
     assert!(store.due_reminders(now).unwrap().is_empty());
 
-    // Snooze re-fires at the target (in-app), then dismiss silences it.
+    // Snoozing a fired row re-opens it: fires again at the target, in-app
+    // only (the scheduler checks snoozed_to_utc to skip the desktop ping).
     let snoozed_to = now + Duration::minutes(15);
     store.snooze_fire(fire_id, snoozed_to).unwrap();
-    // mark_fired cleared fired_at? No — snooze after fire is a no-op path;
-    // use a second occurrence to exercise snooze.
+    assert!(store.due_reminders(now).unwrap().is_empty());
+    let due = store.due_reminders(snoozed_to).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].fire_id, fire_id);
+    assert_eq!(due[0].due_utc(), snoozed_to);
+    assert!(due[0].snoozed_to_utc.is_some());
+
+    // A pending (never fired) row snoozes the same way; dismiss silences.
     let occ2 = now + Duration::days(1);
     let fire2 = store
         .upsert_fire(reminder_id, occ2, occ2 - Duration::minutes(10))
         .unwrap();
     store.snooze_fire(fire2, snoozed_to).unwrap();
-    assert!(store.due_reminders(now).unwrap().is_empty());
     let due = store.due_reminders(snoozed_to).unwrap();
-    assert_eq!(due.len(), 1);
-    assert_eq!(due[0].fire_id, fire2);
-    assert_eq!(due[0].due_utc(), snoozed_to);
+    assert_eq!(due.len(), 2);
 
     store.dismiss_fire(fire2).unwrap();
+    store.dismiss_fire(fire_id).unwrap();
     assert!(store
         .due_reminders(snoozed_to + Duration::hours(1))
         .unwrap()
@@ -583,4 +588,30 @@ fn recurring_event_fires_per_occurrence() {
     assert_ne!(f1, f2);
     let due = store.due_reminders(now).unwrap();
     assert_eq!(due.len(), 2, "one fire per occurrence");
+}
+
+#[test]
+fn purge_expired_hard_deletes_old_trashed_events() {
+    let db = mem_db();
+    let store = CalendarStore::new(&db);
+    let old = store
+        .create_event(&timed_input("2026-01-05T09:00:00Z", "2026-01-05T09:30:00Z"))
+        .unwrap();
+    let fresh = store
+        .create_event(&timed_input("2026-01-06T09:00:00Z", "2026-01-06T09:30:00Z"))
+        .unwrap();
+    store.trash_event(old).unwrap();
+    store.trash_event(fresh).unwrap();
+    // Backdate `old` past the 30-day grace period.
+    db.conn()
+        .execute(
+            "UPDATE calendar_events SET trashed_at = '2026-01-01T00:00:00Z' WHERE id = ?1",
+            [old.to_string()],
+        )
+        .unwrap();
+
+    let purged = store.purge_expired().unwrap();
+    assert_eq!(purged, 1);
+    assert!(store.get_event(old).is_err());
+    assert!(store.get_event(fresh).unwrap().trashed_at.is_some());
 }
