@@ -66,6 +66,11 @@ impl Db {
         Db::open(&path)
     }
 
+    /// The resolved default database path (engine opens its own connection).
+    pub fn default_db_path() -> PathBuf {
+        default_path().0
+    }
+
     /// Default data dir (for the lock file, crash logs). `$ADJUTANT_DATA_DIR`
     /// if set, else the XDG data dir (created), else the current dir.
     pub fn data_dir() -> PathBuf {

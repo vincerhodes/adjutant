@@ -9,6 +9,8 @@ use egui::{Context, Key, Modifiers, RichText, Ui, ViewportCommand};
 use uuid::Uuid;
 
 use crate::db::Db;
+use crate::email::sync::{live_factories, SyncEngine};
+use crate::email::ui::EmailUi;
 use crate::todo::ui::TodoUi;
 use crate::ui::{fonts, help, placeholder, theme};
 
@@ -41,6 +43,8 @@ pub struct AdjutantApp {
     db: Db,
     module: Module,
     todo: TodoUi,
+    email: EmailUi,
+    sync: Option<SyncEngine>,
     theme: theme::ThemeWatcher,
     theme_choice: theme::ThemeChoice,
     theme_dirty: bool,
@@ -54,6 +58,20 @@ pub struct AdjutantApp {
 
 impl AdjutantApp {
     pub fn new(db: Db, cc: &eframe::CreationContext<'_>) -> AdjutantApp {
+        let sync = SyncEngine::start(
+            Db::default_db_path(),
+            live_factories().0,
+            live_factories().1,
+        );
+        Self::new_with_engine(db, cc, Some(sync))
+    }
+
+    /// Test seam: inject a (mock) sync engine, or none at all.
+    pub fn new_with_engine(
+        db: Db,
+        cc: &eframe::CreationContext<'_>,
+        sync: Option<SyncEngine>,
+    ) -> AdjutantApp {
         fonts::setup(&cc.egui_ctx);
         let maximized: bool = db
             .get_setting(SETTINGS_MAXIMIZED)
@@ -92,6 +110,8 @@ impl AdjutantApp {
             db,
             module: Module::Todo,
             todo,
+            email: EmailUi::new(),
+            sync,
             theme: theme::ThemeWatcher::new(),
             theme_choice,
             theme_dirty: true,
@@ -181,6 +201,15 @@ impl eframe::App for AdjutantApp {
         if self.theme.check() {
             self.theme_dirty = true;
         }
+        if let Some(sync) = &self.sync {
+            let events = sync.drain_events();
+            if self.email.handle_events(&events) {
+                ctx.request_repaint();
+            }
+            for ev in &events {
+                crate::email::ui::accounts::account_tested_toast(ev, &mut self.toasts);
+            }
+        }
         self.handle_global_keys(ctx);
         // Esc exits focus mode — unless an editor, the filter, a modal, or
         // the help overlay is active (they own Esc). Editing state is from
@@ -224,9 +253,13 @@ impl eframe::App for AdjutantApp {
                     // Collapse toggle, top-right.
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::ui::ghost_button(ui, "«")
-                                .on_hover_text("Hide sidebar")
-                                .clicked()
+                            if crate::ui::icon_button(
+                                ui,
+                                crate::ui::icons::Icon::ChevronLeft,
+                                "Hide sidebar",
+                                "collapse",
+                            )
+                            .clicked()
                             {
                                 self.set_sidebar_collapsed(true);
                             }
@@ -238,10 +271,10 @@ impl eframe::App for AdjutantApp {
                         Module::Calendar,
                         Module::Scratchpad,
                     ] {
-                        if module == Module::Todo {
-                            let active = self.module == Module::Todo;
-                            if ui.selectable_label(active, module.label()).clicked() {
-                                self.module = Module::Todo;
+                        if module == Module::Todo || module == Module::Email {
+                            let active = self.module == module;
+                            if crate::ui::selectable(ui, active, module.label()).clicked() {
+                                self.module = module;
                             }
                         } else {
                             placeholder::disabled_nav_item(ui, module.label());
@@ -250,6 +283,10 @@ impl eframe::App for AdjutantApp {
                     if self.module == Module::Todo {
                         ui.separator();
                         self.todo.sidebar(ui, &self.db);
+                    }
+                    if self.module == Module::Email {
+                        ui.separator();
+                        self.email.sidebar(ui, &self.db);
                     }
                     // Bottom row: theme picker + help affordances.
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -291,9 +328,13 @@ impl eframe::App for AdjutantApp {
             egui::Area::new(egui::Id::new("sidebar_reveal"))
                 .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
                 .show(&ctx, |ui| {
-                    if crate::ui::ghost_button(ui, "»")
-                        .on_hover_text("Show sidebar")
-                        .clicked()
+                    if crate::ui::icon_button(
+                        ui,
+                        crate::ui::icons::Icon::ChevronRight,
+                        "Show sidebar",
+                        "reveal",
+                    )
+                    .clicked()
                     {
                         self.set_sidebar_collapsed(false);
                     }
@@ -312,6 +353,17 @@ impl eframe::App for AdjutantApp {
                 if self.focus_mode != was_focus {
                     let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
                 }
+            }
+            Module::Email => {
+                let mut toasts = std::mem::take(&mut self.toasts);
+                if let Some(sync) = &self.sync {
+                    self.email.show(ui, &ctx, &self.db, sync, &mut toasts);
+                } else {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        placeholder::placeholder_screen(ui, "Email (no sync engine)");
+                    });
+                }
+                self.toasts = toasts;
             }
             other => {
                 let name = other.label();

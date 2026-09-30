@@ -17,6 +17,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Alt+↑ / Alt+↓", "Move todo among siblings"),
     ("↑ / ↓", "Navigate cards"),
     ("→ / ←", "Unfold card / fold card (or first child / parent)"),
+    (
+        "j / k (email)",
+        "Next / previous thread in the reading pane",
+    ),
     ("Ctrl+.", "Focus mode — full-window list"),
     ("Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset"),
     ("F1", "This overlay"),
