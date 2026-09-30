@@ -15,6 +15,8 @@ use crate::ui::{fonts, help, placeholder, theme};
 const SETTINGS_MAXIMIZED: &str = "window.maximized";
 const SETTINGS_LAST_GROUP: &str = "todo.last_group";
 const SETTINGS_THEME: &str = "ui.theme";
+const SETTINGS_SIDEBAR_COLLAPSED: &str = "ui.sidebar_collapsed";
+const SETTINGS_FOCUS_MODE: &str = "ui.focus_mode";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Module {
@@ -42,6 +44,8 @@ pub struct AdjutantApp {
     theme: theme::ThemeWatcher,
     theme_choice: theme::ThemeChoice,
     theme_dirty: bool,
+    sidebar_collapsed: bool,
+    focus_mode: bool,
     help_open: bool,
     toasts: Vec<String>,
     maximized_on_startup: bool,
@@ -64,6 +68,16 @@ impl AdjutantApp {
             .flatten()
             .and_then(|name| theme::ThemeChoice::from_name(&name))
             .unwrap_or(theme::ThemeChoice::Light);
+        let sidebar_collapsed: bool = db
+            .get_setting(SETTINGS_SIDEBAR_COLLAPSED)
+            .ok()
+            .flatten()
+            .unwrap_or(false);
+        let focus_mode: bool = db
+            .get_setting(SETTINGS_FOCUS_MODE)
+            .ok()
+            .flatten()
+            .unwrap_or(false);
         let mut todo = TodoUi::new(&db);
         if let Some(raw) = last_group {
             if let Ok(id) = Uuid::parse_str(&raw) {
@@ -81,6 +95,8 @@ impl AdjutantApp {
             theme: theme::ThemeWatcher::new(),
             theme_choice,
             theme_dirty: true,
+            sidebar_collapsed,
+            focus_mode,
             help_open: false,
             toasts: Vec::new(),
             maximized_on_startup: maximized,
@@ -107,10 +123,18 @@ impl AdjutantApp {
         self.theme_choice
     }
 
+    /// Database handle — exposed for tests.
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
     fn handle_global_keys(&mut self, ctx: &Context) {
         ctx.input(|i| {
             if i.key_pressed(Key::F1) {
                 self.help_open = !self.help_open;
+            }
+            if i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(Key::Period) {
+                self.toggle_focus_mode();
             }
             if i.modifiers == Modifiers::CTRL && i.key_pressed(Key::Equals) {
                 let z = ctx.zoom_factor();
@@ -124,6 +148,18 @@ impl AdjutantApp {
                 ctx.set_zoom_factor(1.0);
             }
         });
+    }
+
+    fn toggle_focus_mode(&mut self) {
+        self.focus_mode = !self.focus_mode;
+        let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
+    }
+
+    fn set_sidebar_collapsed(&mut self, collapsed: bool) {
+        if collapsed != self.sidebar_collapsed {
+            self.sidebar_collapsed = collapsed;
+            let _ = self.db.set_setting(SETTINGS_SIDEBAR_COLLAPSED, &collapsed);
+        }
     }
 
     fn save_settings(&mut self) {
@@ -146,6 +182,16 @@ impl eframe::App for AdjutantApp {
             self.theme_dirty = true;
         }
         self.handle_global_keys(ctx);
+        // Esc exits focus mode — unless an editor, the filter, a modal, or
+        // the help overlay is active (they own Esc). Editing state is from
+        // the previous frame, so Esc that clears a filter won't also exit.
+        if self.focus_mode
+            && !self.help_open
+            && !self.todo.is_editing()
+            && ctx.input(|i| i.key_pressed(Key::Escape))
+        {
+            self.toggle_focus_mode();
+        }
         if let Some(maximized) = ctx.input(|i| i.viewport().maximized) {
             self.maximized_on_startup = maximized;
         }
@@ -166,72 +212,106 @@ impl eframe::App for AdjutantApp {
             help::show(&ctx, &mut self.help_open);
         }
 
-        // Left sidebar: module nav (+ todo group list when active).
-        egui::Panel::left("sidebar")
-            .resizable(false)
-            .exact_size(180.0)
-            .show_separator_line(false)
-            .show(ui, |ui| {
-                ui.add_space(12.0);
-                for module in [
-                    Module::Todo,
-                    Module::Email,
-                    Module::Calendar,
-                    Module::Scratchpad,
-                ] {
-                    if module == Module::Todo {
-                        let active = self.module == Module::Todo;
-                        if ui.selectable_label(active, module.label()).clicked() {
-                            self.module = Module::Todo;
-                        }
-                    } else {
-                        placeholder::disabled_nav_item(ui, module.label());
-                    }
-                }
-                if self.module == Module::Todo {
-                    ui.separator();
-                    self.todo.sidebar(ui, &self.db);
-                }
-                // Bottom row: theme picker + help affordances.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.add_space(8.0);
-                    let fg = ui.visuals().text_color();
+        let sidebar_hidden = self.focus_mode || self.sidebar_collapsed;
+        if !sidebar_hidden {
+            // Left sidebar: collapse toggle, module nav, todo group list,
+            // theme picker + help at the bottom.
+            egui::Panel::left("sidebar")
+                .resizable(false)
+                .exact_size(180.0)
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    // Collapse toggle, top-right.
                     ui.horizontal(|ui| {
-                        if crate::ui::ghost_button_with(ui, "Help", fg)
-                            .on_hover_text("Keyboard shortcuts (F1)")
-                            .clicked()
-                        {
-                            self.help_open = !self.help_open;
-                        }
-                        // Theme picker: ghost button + popup menu, choice
-                        // persisted and applied live.
-                        let picker_label = format!("Theme: {}", self.theme_choice.label());
-                        egui::containers::menu::MenuButton::from_button(
-                            egui::Button::new(RichText::new(picker_label).color(fg)).frame(false),
-                        )
-                        .ui(ui, |ui| {
-                            for choice in theme::ThemeChoice::ALL {
-                                let label = if choice == self.theme_choice {
-                                    format!("✓ {}", choice.label())
-                                } else {
-                                    format!("  {}", choice.label())
-                                };
-                                if ui.button(label).clicked() {
-                                    self.set_theme(choice);
-                                    ui.close();
-                                }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if crate::ui::ghost_button(ui, "«")
+                                .on_hover_text("Hide sidebar")
+                                .clicked()
+                            {
+                                self.set_sidebar_collapsed(true);
                             }
                         });
                     });
-                    ui.add_space(4.0);
+                    for module in [
+                        Module::Todo,
+                        Module::Email,
+                        Module::Calendar,
+                        Module::Scratchpad,
+                    ] {
+                        if module == Module::Todo {
+                            let active = self.module == Module::Todo;
+                            if ui.selectable_label(active, module.label()).clicked() {
+                                self.module = Module::Todo;
+                            }
+                        } else {
+                            placeholder::disabled_nav_item(ui, module.label());
+                        }
+                    }
+                    if self.module == Module::Todo {
+                        ui.separator();
+                        self.todo.sidebar(ui, &self.db);
+                    }
+                    // Bottom row: theme picker + help affordances.
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        ui.add_space(8.0);
+                        let fg = ui.visuals().text_color();
+                        ui.horizontal(|ui| {
+                            if crate::ui::ghost_button_with(ui, "Help", fg)
+                                .on_hover_text("Keyboard shortcuts (F1)")
+                                .clicked()
+                            {
+                                self.help_open = !self.help_open;
+                            }
+                            // Theme picker: ghost button + popup menu, choice
+                            // persisted and applied live.
+                            let picker_label = format!("Theme: {}", self.theme_choice.label());
+                            egui::containers::menu::MenuButton::from_button(
+                                egui::Button::new(RichText::new(picker_label).color(fg))
+                                    .frame(false),
+                            )
+                            .ui(ui, |ui| {
+                                for choice in theme::ThemeChoice::ALL {
+                                    let label = if choice == self.theme_choice {
+                                        format!("✓ {}", choice.label())
+                                    } else {
+                                        format!("  {}", choice.label())
+                                    };
+                                    if ui.button(label).clicked() {
+                                        self.set_theme(choice);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+                    });
                 });
-            });
+        } else if !self.focus_mode {
+            // Collapsed (not focus mode): slim floating reveal affordance.
+            egui::Area::new(egui::Id::new("sidebar_reveal"))
+                .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
+                .show(&ctx, |ui| {
+                    if crate::ui::ghost_button(ui, "»")
+                        .on_hover_text("Show sidebar")
+                        .clicked()
+                    {
+                        self.set_sidebar_collapsed(false);
+                    }
+                });
+        }
 
         match self.module {
             Module::Todo => {
                 let mut toasts = std::mem::take(&mut self.toasts);
-                self.todo.show(ui, &ctx, &self.db, &mut toasts);
+                let was_focus = self.focus_mode;
+                self.todo
+                    .show(ui, &ctx, &self.db, &mut toasts, &mut self.focus_mode);
                 self.toasts = toasts;
+                // The header Focus button flips the flag directly — sync
+                // persistence here.
+                if self.focus_mode != was_focus {
+                    let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
+                }
             }
             other => {
                 let name = other.label();

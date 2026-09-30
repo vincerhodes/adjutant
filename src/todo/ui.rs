@@ -305,12 +305,21 @@ impl TodoUi {
     }
 
     /// Full todo UI: keyboard shortcuts, panes, modal. Takes the root `ui`
-    /// (the detail panel is a right-side `egui::Panel` on it) plus the ctx
-    /// for shortcut input and the modal window.
-    pub fn show(&mut self, ui: &mut Ui, ctx: &Context, db: &Db, toasts: &mut Vec<String>) {
+    /// plus the ctx for shortcut input and the modal window. `focus_mode` is
+    /// set when the header's Focus button is clicked.
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        ctx: &Context,
+        db: &Db,
+        toasts: &mut Vec<String>,
+        focus_mode: &mut bool,
+    ) {
         self.handle_keys(ctx, db, toasts);
         self.reload(db, None);
 
+        // Detail pane: removed in the cards redesign (M1.5) — kept until
+        // then.
         egui::Panel::right("todo_detail")
             .resizable(true)
             .default_size(300.0)
@@ -321,11 +330,18 @@ impl TodoUi {
             });
 
         egui::CentralPanel::default().show(ui, |ui| match self.view {
-            View::Tree => self.tree_view(ui, db, toasts),
+            View::Tree => self.tree_view(ui, db, toasts, focus_mode),
             View::Trash => self.trash_view(ui, db, toasts),
         });
 
         self.show_confirm_modal(ctx, db, toasts);
+    }
+
+    /// True when an editor, the filter, or the delete-confirm modal is
+    /// active — chrome-level Esc handling (e.g. exiting focus mode) must
+    /// yield to these.
+    pub fn is_editing(&self) -> bool {
+        self.editor.is_some() || self.filter_active || self.confirm.is_some()
     }
 
     // ── keyboard ──────────────────────────────────────────────────────────
@@ -458,7 +474,7 @@ impl TodoUi {
 
     // ── tree view (center) ────────────────────────────────────────────────
 
-    fn tree_view(&mut self, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>) {
+    fn tree_view(&mut self, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>, focus_mode: &mut bool) {
         let Some(group) = self.current_group else {
             ui::empty_state(
                 ui,
@@ -500,6 +516,12 @@ impl TodoUi {
             {
                 self.filter_active = false;
                 self.filter.clear();
+            }
+            if ui::ghost_button(ui, "Focus")
+                .on_hover_text("Focus mode — full-window list (Ctrl+.)")
+                .clicked()
+            {
+                *focus_mode = true;
             }
         });
         ui.add_space(4.0);
@@ -1278,7 +1300,7 @@ fn status_color(ui: &Ui, status: Status) -> Color32 {
         Status::Open => ui.visuals().text_color(),
         // §7a: in_progress = theme yellow, done = theme green.
         Status::InProgress => ui.visuals().warn_fg_color,
-        Status::Done => theme::success_color(ui),
+        Status::Done => theme::palette(ui).success,
         Status::Cancelled => ui.visuals().weak_text_color(),
     }
 }

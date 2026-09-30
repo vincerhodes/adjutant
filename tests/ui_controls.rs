@@ -17,6 +17,7 @@ struct TodoHarnessState {
     db: Db,
     todo: TodoUi,
     toasts: Vec<String>,
+    focus_requested: bool,
 }
 
 /// TodoUi in isolation: sidebar + main panes, one empty "Personal" group.
@@ -30,12 +31,14 @@ fn make_harness() -> Harness<'static, TodoHarnessState> {
             |ui, app: &mut TodoHarnessState| {
                 app.todo.sidebar(ui, &app.db);
                 let ctx = ui.ctx().clone();
-                app.todo.show(ui, &ctx, &app.db, &mut app.toasts);
+                app.todo
+                    .show(ui, &ctx, &app.db, &mut app.toasts, &mut app.focus_requested);
             },
             TodoHarnessState {
                 db,
                 todo,
                 toasts: Vec::new(),
+                focus_requested: false,
             },
         )
 }
@@ -54,12 +57,14 @@ fn make_harness_with_todos() -> Harness<'static, TodoHarnessState> {
             |ui, app: &mut TodoHarnessState| {
                 app.todo.sidebar(ui, &app.db);
                 let ctx = ui.ctx().clone();
-                app.todo.show(ui, &ctx, &app.db, &mut app.toasts);
+                app.todo
+                    .show(ui, &ctx, &app.db, &mut app.toasts, &mut app.focus_requested);
             },
             TodoHarnessState {
                 db,
                 todo,
                 toasts: Vec::new(),
+                focus_requested: false,
             },
         )
 }
@@ -380,4 +385,67 @@ fn mouse_help_button_toggles_overlay() {
     h.get_by_label("Help").click();
     h.run_steps(2);
     assert_eq!(h.query_all_by_label_contains("Shortcuts").count(), 0);
+}
+
+#[test]
+fn focus_mode_hides_sidebar_and_esc_exits() {
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    TodoStore::new(&db).create_group("Personal").unwrap();
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_eframe(move |cc| AdjutantApp::new(db, cc));
+    h.run_steps(2);
+    assert_eq!(
+        h.query_all_by_label_contains("Groups").count(),
+        1,
+        "sidebar visible by default"
+    );
+
+    h.key_press_modifiers(Modifiers::CTRL, Key::Period);
+    h.run_steps(2);
+    assert_eq!(
+        h.query_all_by_label_contains("Groups").count(),
+        0,
+        "Ctrl+. focus mode hides the sidebar"
+    );
+
+    h.key_press(Key::Escape);
+    h.run_steps(2);
+    assert_eq!(
+        h.query_all_by_label_contains("Groups").count(),
+        1,
+        "Esc exits focus mode"
+    );
+}
+
+#[test]
+fn theme_picker_switches_palette_and_persists() {
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    TodoStore::new(&db).create_group("Personal").unwrap();
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_eframe(move |cc| AdjutantApp::new(db, cc));
+    h.run_steps(2);
+    assert_eq!(
+        h.state().theme_choice(),
+        adjutant::ui::theme::ThemeChoice::Light
+    );
+
+    // Open the picker and choose Dark (menu items are padded with leading
+    // spaces, so match loosely).
+    h.get_by_label("Theme: Light").click();
+    h.run_steps(2);
+    h.get_by_label_contains("Dark").click();
+    h.run_steps(2);
+
+    assert_eq!(
+        h.state().theme_choice(),
+        adjutant::ui::theme::ThemeChoice::Dark
+    );
+    assert_eq!(
+        h.state().current_palette(),
+        adjutant::ui::theme::Palette::dark()
+    );
+    let stored: String = h.state().db().get_setting("ui.theme").unwrap().unwrap();
+    assert_eq!(stored, "dark");
 }
