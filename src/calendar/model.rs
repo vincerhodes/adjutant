@@ -182,6 +182,8 @@ pub struct DueReminder {
     pub occurrence_utc: DateTime<Utc>,
     pub fire_at_utc: DateTime<Utc>,
     pub snoozed_to_utc: Option<DateTime<Utc>>,
+    /// Set once the reminder has fired (banner shows it as fired-today).
+    pub fired_at: Option<DateTime<Utc>>,
     pub offset_minutes: i64,
     pub title: String,
 }

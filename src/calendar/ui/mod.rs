@@ -17,7 +17,7 @@ use egui::{Context, Key, Ui};
 use crate::db::Db;
 use crate::ui::{self, icons};
 
-use super::model::{Event, Occurrence};
+use super::model::{DueReminder, Event, Occurrence};
 use super::CalendarStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,7 @@ pub struct CalendarUi {
     week_anchor: DateTime<Utc>,
     events: Vec<Event>,
     upcoming: Vec<Occurrence>,
+    due: Vec<DueReminder>,
     now: DateTime<Utc>,
     loaded_minute: i64,
     pub form: Option<event_form::EventForm>,
@@ -66,6 +67,7 @@ impl CalendarUi {
             week_anchor: Utc::now(),
             events: Vec::new(),
             upcoming: Vec::new(),
+            due: Vec::new(),
             now: Utc::now(),
             loaded_minute: -1,
             form: None,
@@ -133,7 +135,9 @@ impl CalendarUi {
                     }
                 });
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
+            reminder_banner::show(self, ui, db, toasts);
+            ui.add_space(4.0);
 
             match self.view {
                 CalendarView::Dashboard => dashboard::show(self, ui, db),
@@ -174,6 +178,9 @@ impl CalendarUi {
             .events_in_window(week_start, week_end)
             .unwrap_or_default();
         self.upcoming = store.upcoming_occurrences(now, 50).unwrap_or_default();
+        self.due = store
+            .banner_items(now, Duration::hours(24))
+            .unwrap_or_default();
     }
 }
 

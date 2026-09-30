@@ -397,21 +397,69 @@ fn linked_todos(ui: &mut Ui, db: &Db, email_id: Uuid) {
         .filter(|l| l.source.kind == EntityType::Todo)
         .map(|l| l.source.id)
         .collect();
-    if todo_links.is_empty() {
+    let event_links: Vec<Uuid> = links
+        .iter()
+        .filter(|l| l.source.kind == EntityType::Event)
+        .map(|l| l.source.id)
+        .collect();
+    let reminder_links: Vec<Uuid> = links
+        .iter()
+        .filter(|l| l.source.kind == EntityType::Reminder)
+        .map(|l| l.source.id)
+        .collect();
+    if todo_links.is_empty() && event_links.is_empty() && reminder_links.is_empty() {
         return;
     }
     ui.add_space(10.0);
-    ui.label(
-        RichText::new("Linked todos")
-            .small()
-            .color(ui.visuals().weak_text_color()),
-    );
-    let store = TodoStore::new(db);
-    for id in todo_links {
-        let title = store
-            .get(id)
-            .map(|t| t.title)
-            .unwrap_or_else(|_| "Unavailable".to_string());
-        ui.label(RichText::new(format!("• {title}")).small());
+    if !todo_links.is_empty() {
+        ui.label(
+            RichText::new("Linked todos")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let store = TodoStore::new(db);
+        for id in todo_links {
+            let title = store
+                .get(id)
+                .map(|t| t.title)
+                .unwrap_or_else(|_| "Unavailable".to_string());
+            ui.label(RichText::new(format!("• {title}")).small());
+        }
+    }
+    // Calendar entries: read-only link resolution (todo pickers create the
+    // links — spec: no new link UI in the reading pane).
+    if !event_links.is_empty() {
+        ui.label(
+            RichText::new("Linked events")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let store = crate::calendar::CalendarStore::new(db);
+        for id in event_links {
+            let title = store
+                .get_event(id)
+                .map(|e| e.title)
+                .unwrap_or_else(|_| "Unavailable".to_string());
+            ui.label(RichText::new(format!("• {title}")).small());
+        }
+    }
+    if !reminder_links.is_empty() {
+        ui.label(
+            RichText::new("Linked reminders")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let store = crate::calendar::CalendarStore::new(db);
+        for id in reminder_links {
+            let label = store
+                .get_reminder(id)
+                .and_then(|r| {
+                    store
+                        .get_event(r.event_id)
+                        .map(|e| format!("{} min before {}", r.offset_minutes, e.title))
+                })
+                .unwrap_or_else(|_| "Unavailable".to_string());
+            ui.label(RichText::new(format!("• {label}")).small());
+        }
     }
 }

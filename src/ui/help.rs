@@ -22,6 +22,9 @@ const SHORTCUTS: &[(&str, &str)] = &[
         "Next / previous thread in the reading pane",
     ),
     ("Ctrl+.", "Focus mode — full-window list"),
+    ("Ctrl+N (calendar)", "New event"),
+    ("← / → (calendar)", "Previous / next week"),
+    ("Esc (calendar)", "Close the event form"),
     ("Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset"),
     ("F1", "This overlay"),
 ];

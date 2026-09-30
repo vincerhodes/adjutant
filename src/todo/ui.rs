@@ -1438,6 +1438,31 @@ impl TodoUi {
                         }
                     }
                 }
+                // Calendar entries: link this todo to an event (scheduled_as).
+                let calendar_store = crate::calendar::CalendarStore::new(db);
+                if let Ok(events) = calendar_store.search_events(&search, 5) {
+                    for event in events {
+                        let text = format!("Event — {}", event.title);
+                        let response = ui.add(
+                            egui::Label::new(RichText::new(text).small()).sense(Sense::click()),
+                        );
+                        if response.clicked() {
+                            *inner_clicked = true;
+                            let event_ref = EntityRef::new(EntityType::Event, event.id);
+                            match links.link(
+                                &target,
+                                &event_ref,
+                                &Relation::from(Relation::SCHEDULED_AS),
+                            ) {
+                                Ok(()) => {
+                                    self.blocked_search.clear();
+                                    toasts.push("Linked event".to_string());
+                                }
+                                Err(e) => toasts.push(e.to_string()),
+                            }
+                        }
+                    }
+                }
             }
         }
     }

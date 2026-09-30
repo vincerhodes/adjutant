@@ -302,3 +302,165 @@ fn recurring_event_edit_scope_this_creates_exception() {
     assert_eq!(occs.len(), 1);
     assert_eq!(occs[0].title, "Daily sync (moved)");
 }
+
+fn banner_fixture(name: &str) -> (PathBuf, uuid::Uuid, uuid::Uuid) {
+    let path = temp_db_path(name);
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    let now = chrono::Utc::now();
+    let start = now + chrono::Duration::hours(1);
+    let event_id = store
+        .create_event(&EventInput {
+            start_utc: Some(start),
+            end_utc: Some(start + chrono::Duration::minutes(30)),
+            ..base_input("Banner meeting")
+        })
+        .unwrap();
+    let reminder_id = store.add_reminder(event_id, 10).unwrap();
+    let fire_id = store
+        .upsert_fire(reminder_id, start, now - chrono::Duration::minutes(5))
+        .unwrap();
+    drop(db);
+    (path, event_id, fire_id)
+}
+
+#[test]
+fn reminder_banner_dismiss_silences_row() {
+    let (path, _event_id, _fire_id) = banner_fixture("banner-dismiss");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    assert!(h.query_all_by_label_contains("Banner meeting").count() >= 1);
+    assert_eq!(h.query_all_by_label_contains("Dismiss").count(), 1);
+
+    h.get_by_label("Dismiss").click();
+    h.run_steps(3);
+
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    assert!(store
+        .banner_items(
+            chrono::Utc::now() + chrono::Duration::days(1),
+            chrono::Duration::hours(24)
+        )
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn reminder_banner_snooze_refires_at_target() {
+    let (path, _event_id, fire_id) = banner_fixture("banner-snooze");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    assert_eq!(h.query_all_by_label_contains("Snooze").count(), 1);
+
+    h.get_by_label("Snooze").click();
+    h.run_steps(2);
+    h.get_by_label("15 minutes").click();
+    h.run_steps(3);
+
+    // Banner clears; the ledger row carries the snooze target.
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    assert!(store
+        .banner_items(chrono::Utc::now(), chrono::Duration::hours(24))
+        .unwrap()
+        .is_empty());
+    let due_later = store
+        .due_reminders(chrono::Utc::now() + chrono::Duration::minutes(20))
+        .unwrap();
+    assert_eq!(due_later.len(), 1);
+    assert_eq!(due_later[0].fire_id, fire_id);
+    assert!(due_later[0].snoozed_to_utc.is_some());
+
+    // After the snooze target passes, the banner shows the row again and
+    // Dismiss works on it.
+    let db2 = Db::open(&path).unwrap();
+    let store2 = CalendarStore::new(&db2);
+    let fire = store2
+        .due_reminders(chrono::Utc::now() + chrono::Duration::minutes(20))
+        .unwrap()[0]
+        .clone();
+    store2
+        .snooze_fire(
+            fire.fire_id,
+            chrono::Utc::now() - chrono::Duration::minutes(1),
+        )
+        .unwrap();
+    drop(db);
+    drop(db2);
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    assert_eq!(h.query_all_by_label_contains("Dismiss").count(), 1);
+    h.get_by_label("Dismiss").click();
+    h.run_steps(3);
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    assert!(store
+        .banner_items(
+            chrono::Utc::now() + chrono::Duration::days(1),
+            chrono::Duration::hours(24)
+        )
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn todo_link_picker_gains_event_entries() {
+    use adjutant::core::entity::{EntityRef, EntityType};
+    use adjutant::core::link::LinkStore;
+    use adjutant::todo::TodoStore;
+
+    let path = temp_db_path("link-picker");
+    let db = Db::open(&path).unwrap();
+    let todos = TodoStore::new(&db);
+    let group = todos.create_group("Personal").unwrap();
+    todos.create(group.id, None, "Prep slides").unwrap();
+    let store = CalendarStore::new(&db);
+    let start = chrono::Utc::now() + chrono::Duration::days(1);
+    let event_id = store
+        .create_event(&EventInput {
+            start_utc: Some(start),
+            end_utc: Some(start + chrono::Duration::hours(1)),
+            ..base_input("Team sync")
+        })
+        .unwrap();
+    drop(db);
+
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    // Todo module: unfold the card, open the link picker, search "sync".
+    h.get_by_label("Todo").click();
+    h.run_steps(3);
+    {
+        let mut nodes: Vec<_> = h.query_all_by_label("Prep slides").collect();
+        nodes.sort_by(|a, b| a.rect().width().partial_cmp(&b.rect().width()).unwrap());
+        nodes.last().unwrap().click();
+    }
+    h.run_steps(3);
+    h.get_by_label("Blocked by…").click();
+    h.run_steps(2);
+    {
+        let inputs: Vec<_> = h
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .collect();
+        inputs.last().unwrap().focus();
+    }
+    h.run_steps(1);
+    {
+        let inputs: Vec<_> = h
+            .query_all_by_role(egui::accesskit::Role::TextInput)
+            .collect();
+        inputs.last().unwrap().type_text("sync");
+    }
+    h.run_steps(2);
+    // The calendar entry appears in the picker results and links on click.
+    h.get_by_label_contains("Event — Team sync").click();
+    h.run_steps(2);
+
+    let db = Db::open(&path).unwrap();
+    let links = LinkStore::new(&db)
+        .links_to(&EntityRef::new(EntityType::Event, event_id))
+        .unwrap();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].source.kind, EntityType::Todo);
+}

@@ -430,7 +430,8 @@ impl<'a> CalendarStore<'a> {
     ) -> Result<Vec<DueReminder>> {
         let sql = format!(
             "SELECT f.id, f.reminder_id, r.event_id, f.occurrence_utc,
-                    f.fire_at_utc, f.snoozed_to_utc, r.offset_minutes, e.title
+                    f.fire_at_utc, f.snoozed_to_utc, f.fired_at,
+                    r.offset_minutes, e.title
              FROM calendar_reminder_fires f
              JOIN calendar_reminders r ON r.id = f.reminder_id
              JOIN calendar_events e ON e.id = r.event_id
@@ -449,8 +450,12 @@ impl<'a> CalendarStore<'a> {
                     .get::<_, Option<String>>(5)?
                     .map(|s| dt(&s))
                     .transpose()?,
-                offset_minutes: row.get(6)?,
-                title: row.get(7)?,
+                fired_at: row
+                    .get::<_, Option<String>>(6)?
+                    .map(|s| dt(&s))
+                    .transpose()?,
+                offset_minutes: row.get(7)?,
+                title: row.get(8)?,
             })
         })?;
         collect(rows)
@@ -526,6 +531,41 @@ impl<'a> CalendarStore<'a> {
             .map(|s| parse_uuid_str(&s))
             .transpose()?
             .ok_or_else(|| CalendarError::Corrupt("fire row vanished after upsert".into()))
+    }
+
+    /// Title search over live events (link picker). Relations are not
+    /// attached — the picker only needs id + title.
+    pub fn search_events(&self, needle: &str, limit: usize) -> Result<Vec<Event>> {
+        let pattern = format!("%{}%", needle.replace('%', "_"));
+        let events = self.base_events("trashed_at IS NULL AND title LIKE ?1", params![pattern])?;
+        Ok(events.into_iter().take(limit).collect())
+    }
+
+    /// A single reminder row by id (read-only link resolution).
+    pub fn get_reminder(&self, id: Uuid) -> Result<Reminder> {
+        let mut stmt = self.conn().prepare(
+            "SELECT id, event_id, offset_minutes, created_at, updated_at
+             FROM calendar_reminders WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id.to_string()], map_reminder_row)?;
+        let row = rows
+            .next()
+            .transpose()?
+            .ok_or_else(|| CalendarError::NotFound(id.to_string()))?;
+        Ok(row)
+    }
+
+    /// Banner working set (spec §6): pending-due fires plus fired-within-
+    /// `horizon` rows — the user can Dismiss/Snooze either kind. Trashed
+    /// events and dismissed rows are excluded.
+    pub fn banner_items(&self, now: DateTime<Utc>, horizon: Duration) -> Result<Vec<DueReminder>> {
+        self.query_due(
+            "f.dismissed = 0 AND e.trashed_at IS NULL AND (
+                 (f.fired_at IS NULL AND COALESCE(f.snoozed_to_utc, f.fire_at_utc) <= ?1)
+                 OR f.fired_at >= ?2
+             )",
+            params![now.to_rfc3339(), (now - horizon).to_rfc3339()],
+        )
     }
 
     /// Hard-delete events trashed more than 30 days ago (startup purge,
