@@ -14,6 +14,7 @@ use crate::ui::{fonts, help, placeholder, theme};
 
 const SETTINGS_MAXIMIZED: &str = "window.maximized";
 const SETTINGS_LAST_GROUP: &str = "todo.last_group";
+const SETTINGS_THEME: &str = "ui.theme";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Module {
@@ -39,6 +40,7 @@ pub struct AdjutantApp {
     module: Module,
     todo: TodoUi,
     theme: theme::ThemeWatcher,
+    theme_choice: theme::ThemeChoice,
     theme_dirty: bool,
     help_open: bool,
     toasts: Vec<String>,
@@ -55,6 +57,13 @@ impl AdjutantApp {
             .flatten()
             .unwrap_or(false);
         let last_group: Option<String> = db.get_setting(SETTINGS_LAST_GROUP).ok().flatten();
+        // Light is the default on fresh installs (settings unset).
+        let theme_choice = db
+            .get_setting::<String>(SETTINGS_THEME)
+            .ok()
+            .flatten()
+            .and_then(|name| theme::ThemeChoice::from_name(&name))
+            .unwrap_or(theme::ThemeChoice::Light);
         let mut todo = TodoUi::new(&db);
         if let Some(raw) = last_group {
             if let Ok(id) = Uuid::parse_str(&raw) {
@@ -70,12 +79,32 @@ impl AdjutantApp {
             module: Module::Todo,
             todo,
             theme: theme::ThemeWatcher::new(),
+            theme_choice,
             theme_dirty: true,
             help_open: false,
             toasts: Vec::new(),
             maximized_on_startup: maximized,
             first_frame: true,
         }
+    }
+
+    /// Switch theme: apply live and persist immediately.
+    fn set_theme(&mut self, choice: theme::ThemeChoice) {
+        if choice != self.theme_choice {
+            self.theme_choice = choice;
+            self.theme_dirty = true;
+            let _ = self.db.set_setting(SETTINGS_THEME, &choice.name());
+        }
+    }
+
+    /// Active palette (built-in or Omarchy-watched) — exposed for tests.
+    pub fn current_palette(&self) -> theme::Palette {
+        theme::active_palette(self.theme_choice, &self.theme)
+    }
+
+    /// Current theme choice — exposed for tests.
+    pub fn theme_choice(&self) -> theme::ThemeChoice {
+        self.theme_choice
     }
 
     fn handle_global_keys(&mut self, ctx: &Context) {
@@ -125,9 +154,10 @@ impl eframe::App for AdjutantApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if self.first_frame || self.theme_dirty {
-            let visuals = theme::visuals(self.theme.palette());
+            let palette = theme::active_palette(self.theme_choice, &self.theme);
+            let visuals = theme::visuals(&palette);
             ctx.set_visuals(visuals);
-            theme::store_semantic_colors(&ctx, self.theme.palette());
+            theme::store_palette(&ctx, &palette);
             self.first_frame = false;
             self.theme_dirty = false;
         }
@@ -162,17 +192,37 @@ impl eframe::App for AdjutantApp {
                     ui.separator();
                     self.todo.sidebar(ui, &self.db);
                 }
-                // Pin the help affordance to the sidebar bottom, in normal
-                // foreground (a persistent control, not a hint).
+                // Bottom row: theme picker + help affordances.
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.add_space(8.0);
                     let fg = ui.visuals().text_color();
-                    if crate::ui::ghost_button_with(ui, "Help", fg)
-                        .on_hover_text("Keyboard shortcuts (F1)")
-                        .clicked()
-                    {
-                        self.help_open = !self.help_open;
-                    }
+                    ui.horizontal(|ui| {
+                        if crate::ui::ghost_button_with(ui, "Help", fg)
+                            .on_hover_text("Keyboard shortcuts (F1)")
+                            .clicked()
+                        {
+                            self.help_open = !self.help_open;
+                        }
+                        // Theme picker: ghost button + popup menu, choice
+                        // persisted and applied live.
+                        let picker_label = format!("Theme: {}", self.theme_choice.label());
+                        egui::containers::menu::MenuButton::from_button(
+                            egui::Button::new(RichText::new(picker_label).color(fg)).frame(false),
+                        )
+                        .ui(ui, |ui| {
+                            for choice in theme::ThemeChoice::ALL {
+                                let label = if choice == self.theme_choice {
+                                    format!("✓ {}", choice.label())
+                                } else {
+                                    format!("  {}", choice.label())
+                                };
+                                if ui.button(label).clicked() {
+                                    self.set_theme(choice);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                     ui.add_space(4.0);
                 });
             });

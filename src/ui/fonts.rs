@@ -62,8 +62,10 @@ pub fn resolve_ui_font() -> Option<PathBuf> {
     UI_FONT_CANDIDATES.iter().find_map(|c| find_font_file(c))
 }
 
-/// Build font definitions: resolved system sans as proportional, egui
-/// default mono unchanged. Returns `None` when no system font resolves.
+/// Build font definitions: resolved system sans first, egui's bundled fonts
+/// kept as fallbacks (glyph coverage for symbols the system font lacks —
+/// checkmarks, arrows), default mono unchanged. Returns `None` when no
+/// system font resolves.
 pub fn build_font_definitions(font_path: Option<&Path>) -> Option<FontDefinitions> {
     let owned: Option<PathBuf>;
     let path: &Path = match font_path {
@@ -76,11 +78,18 @@ pub fn build_font_definitions(font_path: Option<&Path>) -> Option<FontDefinition
     let bytes = std::fs::read(path).ok()?;
     let mut defs = FontDefinitions::default();
     let family = "AdjutantSans".to_owned();
+    let fallbacks = defs
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
     defs.font_data.insert(
         family.clone(),
         std::sync::Arc::new(FontData::from_owned(bytes)),
     );
-    defs.families.insert(FontFamily::Proportional, vec![family]);
+    let mut chain = vec![family];
+    chain.extend(fallbacks);
+    defs.families.insert(FontFamily::Proportional, chain);
     Some(defs)
 }
 
