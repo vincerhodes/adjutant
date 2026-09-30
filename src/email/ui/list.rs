@@ -9,6 +9,10 @@ use crate::email::ui::{EmailUi, ReadingState};
 use crate::ui::{self, icons, theme};
 
 pub fn show(state: &mut EmailUi, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>) {
+    crate::email::ui::with_list_margins(ui, |ui| show_inner(state, ui, db, toasts));
+}
+
+fn show_inner(state: &mut EmailUi, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>) {
     let _ = (db, toasts);
     // Header: scope name + Compose + Filter….
     ui.add_space(24.0);
@@ -130,51 +134,41 @@ fn thread_card(ui: &mut Ui, state: &mut EmailUi, thread: &crate::email::model::E
 
     let frame = crate::ui::card_frame(ui, false, false);
     let frame_response = frame.show(ui, |ui| {
-        ui.set_min_height(56.0 - 20.0);
         let mut child_clicked = false;
         let mut badge_rects: Vec<egui::Rect> = Vec::new();
+        let color = account_color(state, thread.account_id);
+
+        // Line 1: subject (semibold) … right: date, thread count, paperclip,
+        // unread dot.
         ui.horizontal(|ui| {
-            let color = account_color(state, thread.account_id);
             icons::group_dot(ui, color, 10.0);
-
-            let from = latest
-                .from_name
-                .clone()
-                .unwrap_or_else(|| latest.from_addr.clone());
-            let mut from_text = RichText::new(from).font(crate::ui::fonts::title_font(ui.ctx()));
+            let subject = if thread.subject.trim().is_empty() {
+                "(no subject)".to_string()
+            } else {
+                thread.subject.clone()
+            };
+            let mut subject_text =
+                RichText::new(subject).font(crate::ui::fonts::title_font(ui.ctx()));
             if unread {
-                from_text = from_text.strong();
+                subject_text = subject_text.strong();
             }
-            let from_resp = ui.add(egui::Label::new(from_text).sense(egui::Sense::click()));
-            if from_resp.clicked() || from_resp.double_clicked() {
-                open(state);
-                child_clicked = true;
-            }
-
-            let mut subject = RichText::new(&thread.subject);
-            if unread {
-                subject = subject.strong();
-            }
-            let subject_resp = ui.add(egui::Label::new(subject).sense(egui::Sense::click()));
+            let subject_resp = ui.add(egui::Label::new(subject_text).sense(egui::Sense::click()));
             if subject_resp.clicked() || subject_resp.double_clicked() {
                 open(state);
                 child_clicked = true;
             }
-
-            if !thread.snippet.is_empty() {
-                ui.label(
-                    RichText::new(&thread.snippet)
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
-            }
-
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(
-                    RichText::new(short_date(&thread.latest_date))
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
+                if unread {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 4.0, p.gold);
+                    badge_rects.push(rect);
+                }
+                if thread.has_attachments {
+                    badge_rects.push(
+                        icons::chip(ui, icons::Icon::Paperclip, p.muted, "has attachments").rect,
+                    );
+                }
                 if thread.message_count > 1 {
                     let (_, rect) = icons::chip_with_text(
                         ui,
@@ -185,18 +179,39 @@ fn thread_card(ui: &mut Ui, state: &mut EmailUi, thread: &crate::email::model::E
                     );
                     badge_rects.push(rect);
                 }
-                if thread.has_attachments {
-                    badge_rects.push(
-                        icons::chip(ui, icons::Icon::Paperclip, p.muted, "has attachments").rect,
-                    );
-                }
-                if unread {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 4.0, p.gold);
-                    badge_rects.push(rect);
-                }
+                ui.label(
+                    RichText::new(short_date(&thread.latest_date))
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
             });
+        });
+
+        // Line 2: "sender — snippet", muted, single line, elided.
+        ui.horizontal(|ui| {
+            let from = latest
+                .from_name
+                .clone()
+                .unwrap_or_else(|| latest.from_addr.clone());
+            let from_resp =
+                ui.add(egui::Label::new(RichText::new(from).small()).sense(egui::Sense::click()));
+            if from_resp.clicked() {
+                open(state);
+                child_clicked = true;
+            }
+            if !thread.snippet.is_empty() {
+                let line = format!("— {}", thread.snippet);
+                let width = ui.available_width();
+                ui.add_sized(
+                    [width.max(40.0), 18.0],
+                    egui::Label::new(
+                        RichText::new(line)
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .truncate(),
+                );
+            }
         });
         (child_clicked, badge_rects)
     });

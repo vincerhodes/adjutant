@@ -515,7 +515,7 @@ impl<'a> EmailStore<'a> {
         attachments: &[EmailAttachmentMeta],
     ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
-        let snippet: String = body_text.chars().take(140).collect();
+        let snippet = extract_snippet(body_text);
         let has_attachments = i64::from(!attachments.is_empty());
         self.conn().execute(
             "UPDATE emails SET body_text = ?2, body_html = ?3,
@@ -952,6 +952,46 @@ fn thread_from_messages(messages: Vec<Email>) -> Option<EmailThread> {
     })
 }
 
+/// Extract a one-line snippet from a fetched body: skip quoted-reply junk
+/// (lines starting with '>', "Name <addr> wrote:", "On … wrote:", and
+/// date-separator lines like "Sam · 29 Sept 2026"), then take the first
+/// substantive line, capped at 140 chars.
+pub fn extract_snippet(body: &str) -> String {
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_quote_junk(trimmed) {
+            continue;
+        }
+        return trimmed.chars().take(140).collect();
+    }
+    String::new()
+}
+
+fn is_quote_junk(line: &str) -> bool {
+    if line.starts_with('>') {
+        return true;
+    }
+    if line.ends_with("wrote:") {
+        return true;
+    }
+    // Date-separator lines: "Sam · 29 Sept 2026" / "On Mon, 1 Jan 2026 at
+    // 10:00, Sam <sam@x> wrote" variants already caught by "wrote:".
+    if line.contains('·') && ends_with_year(line) {
+        return true;
+    }
+    false
+}
+
+fn ends_with_year(line: &str) -> bool {
+    let digits: String = line
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let year: String = digits.chars().rev().collect();
+    year.len() == 4
+}
+
 /// Deterministic fresh-thread id: derived from (account, identity) so a
 /// UIDVALIDITY resync re-ingests to the SAME thread_id (plan risk 10 —
 /// "match by message_id first, deterministic"). Identity = message-id when
@@ -1009,4 +1049,46 @@ pub struct NewOutbox {
     pub body: String,
     pub in_reply_to: Option<String>,
     pub source_email_id: Option<Uuid>,
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::extract_snippet;
+
+    #[test]
+    fn skips_quoted_lines() {
+        let body = "> previous stuff\n>\n> more quote\nActually substantive line here";
+        assert_eq!(extract_snippet(body), "Actually substantive line here");
+    }
+
+    #[test]
+    fn skips_wrote_headers() {
+        let body = "On Mon, 29 Sept 2026 at 10:00, Sam <sam@x.com> wrote:\nNew content starts";
+        assert_eq!(extract_snippet(body), "New content starts");
+        let body2 = "Sam <sam@x.com> wrote:\nhello there";
+        assert_eq!(extract_snippet(body2), "hello there");
+    }
+
+    #[test]
+    fn skips_date_separator_lines() {
+        let body = "Sam · 29 Sept 2026\nThe actual first line of the reply";
+        assert_eq!(extract_snippet(body), "The actual first line of the reply");
+    }
+
+    #[test]
+    fn first_substantive_line_capped() {
+        let long = "x".repeat(300);
+        let body = format!("\n\n{long}");
+        assert_eq!(extract_snippet(&body).len(), 140);
+    }
+
+    #[test]
+    fn plain_body_first_line() {
+        assert_eq!(extract_snippet("Hello there\nsecond line"), "Hello there");
+    }
+
+    #[test]
+    fn all_junk_returns_empty() {
+        assert_eq!(extract_snippet("> a\n> b\n"), "");
+    }
 }

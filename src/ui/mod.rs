@@ -90,7 +90,7 @@ pub fn card_frame(ui: &Ui, hovered: bool, unfolded: bool) -> egui::Frame {
     let mut frame = egui::Frame::new()
         .fill(if hovered { p.card_hover } else { p.card_fill })
         .corner_radius(egui::CornerRadius::same(if unfolded { 12 } else { 10 }))
-        .inner_margin(egui::Margin::symmetric(16, 10));
+        .inner_margin(egui::Margin::symmetric(12, 8));
     if let Some(shadow) = theme::card_shadow(&p, hovered) {
         frame = frame.shadow(shadow);
     }

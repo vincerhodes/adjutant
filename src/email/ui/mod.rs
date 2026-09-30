@@ -329,6 +329,14 @@ impl EmailUi {
     }
 }
 
+/// Email screens get breathing room around card lists (the ScrollArea ran
+/// edge-to-edge — "0 padding left/right/bottom looks weird").
+pub fn with_list_margins(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    egui::Frame::new()
+        .outer_margin(egui::Margin::symmetric(16, 8))
+        .show(ui, add);
+}
+
 impl Default for EmailUi {
     fn default() -> Self {
         Self::new()
