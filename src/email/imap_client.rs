@@ -45,8 +45,13 @@ pub trait ImapTransport {
     fn capabilities(&mut self) -> Result<Vec<String>, EmailError>;
     fn list_folders(&mut self) -> Result<Vec<RemoteFolder>, EmailError>;
     fn select(&mut self, folder: &str) -> Result<FolderState, EmailError>;
-    /// Header sync fetch for a UID range (inclusive start, open end).
-    fn fetch_headers(&mut self, uid_start: u32) -> Result<Vec<RemoteMail>, EmailError>;
+    /// Header sync fetch for a UID range (inclusive bounds; `None` end =
+    /// open-ended from `uid_start`).
+    fn fetch_headers(
+        &mut self,
+        uid_start: u32,
+        uid_end: Option<u32>,
+    ) -> Result<Vec<RemoteMail>, EmailError>;
     /// Full-message fetch (BODY.PEEK[]).
     fn fetch_full(&mut self, uid: u32) -> Result<RemoteMail, EmailError>;
     /// All UIDs in the selected folder (for the initial-sync 500 cap).
@@ -170,9 +175,17 @@ impl ImapTransport for LiveImap {
         })
     }
 
-    fn fetch_headers(&mut self, uid_start: u32) -> Result<Vec<RemoteMail>, EmailError> {
+    fn fetch_headers(
+        &mut self,
+        uid_start: u32,
+        uid_end: Option<u32>,
+    ) -> Result<Vec<RemoteMail>, EmailError> {
         let query = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER])";
-        let fetches = Self::imap(self.session.uid_fetch(format!("{uid_start}:*"), query))?;
+        let set = match uid_end {
+            Some(end) => format!("{uid_start}:{end}"),
+            None => format!("{uid_start}:*"),
+        };
+        let fetches = Self::imap(self.session.uid_fetch(set, query))?;
         Ok(fetches
             .iter()
             .filter_map(|f| parse_fetch(f, false))

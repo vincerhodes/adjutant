@@ -385,12 +385,11 @@ impl<'a> EmailStore<'a> {
             // normalized comparison happens in Rust — SQL can't strip
             // Re:/Fwd: prefixes. Bounded to this account; the message-id
             // path above handles the common case first.
-            let mut stmt = match self
+            let Ok(mut stmt) = self
                 .conn()
                 .prepare("SELECT thread_id, subject FROM emails WHERE account_id = ?1")
-            {
-                Ok(s) => s,
-                Err(_) => return Uuid::new_v4(),
+            else {
+                return fallback_thread_id(account_id, message_id, subject);
             };
             let rows = stmt.query_map(params![account_id.to_string()], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -405,7 +404,7 @@ impl<'a> EmailStore<'a> {
                 }
             }
         }
-        Uuid::new_v4()
+        fallback_thread_id(account_id, message_id, subject)
     }
 
     // ── queries ───────────────────────────────────────────────────────────
@@ -786,6 +785,16 @@ impl<'a> EmailStore<'a> {
         collect(rows)
     }
 
+    /// Move a message's local folder row (applied by the engine after a
+    /// server-side move succeeds — the UI never moves rows optimistically).
+    pub fn move_email_local(&self, email_id: Uuid, folder_id: Uuid) -> Result<()> {
+        self.conn().execute(
+            "UPDATE emails SET folder_id = ?2 WHERE id = ?1",
+            params![email_id.to_string(), folder_id.to_string()],
+        )?;
+        Ok(())
+    }
+
     // ── sync log ──────────────────────────────────────────────────────────
 
     pub fn log_sync(&self, account_id: Uuid, event: &str, detail: &str) -> Result<()> {
@@ -915,6 +924,22 @@ fn thread_from_messages(messages: Vec<Email>) -> Option<EmailThread> {
         snippet: first.snippet.clone(),
         messages,
     })
+}
+
+/// Deterministic fresh-thread id: derived from (account, identity) so a
+/// UIDVALIDITY resync re-ingests to the SAME thread_id (plan risk 10 —
+/// "match by message_id first, deterministic"). Identity = message-id when
+/// present, else the normalized subject.
+fn fallback_thread_id(account_id: Uuid, message_id: Option<&str>, subject: &str) -> Uuid {
+    let identity = message_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| normalize_subject(subject));
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("{account_id}:{identity}").as_bytes(),
+    )
 }
 
 fn parse_uuid(s: &str) -> rusqlite::Result<Uuid> {
