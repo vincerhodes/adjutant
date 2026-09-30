@@ -16,6 +16,9 @@ directories = "6"
 uuid = { version = "1", features = ["v4", "serde"] }
 secret-service = { version = "5", features = ["crypto-rust"] } # declared, unused until M2
 libc = "0.2"          # unix flock for single-instance lock
+imap = { version = "=3.0.0-alpha.15", default-features = false, features = ["rustls-tls"] } # pinned; fallback 2.4.1 noted in spec §1
+mailparse = "0.17"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder"] }
 
 [lints.clippy]
 unwrap_used = "warn"

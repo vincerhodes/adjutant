@@ -3,5 +3,6 @@
 pub mod app;
 pub mod core;
 pub mod db;
+pub mod email;
 pub mod todo;
 pub mod ui;
