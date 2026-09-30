@@ -29,6 +29,9 @@ src/todo/      todo store (mod.rs, model.rs) + todo UI (ui.rs)
 src/email/     email store (mod.rs, model.rs), transports (imap_client.rs,
                smtp.rs), sync engine (sync.rs), threading (thread.rs),
                compose (compose.rs), UI (ui/)
+src/calendar/  calendar store (mod.rs, model.rs), recurrence expansion
+               (rrule.rs), reminder scheduler (reminders.rs), desktop
+               notification seam (notify.rs), UI (ui/)
 src/ui/        shared widgets: theme, fonts, icons, help overlay, placeholders
 ```
 
@@ -48,6 +51,15 @@ add `src/<module>/` + migrations as siblings — nothing else changes.
 - **No live network in `cargo test`.** `ImapTransport`/`SmtpTransport`
   are the test seam — tests inject scripted mocks; live impls only run
   from the real app's sync engine.
+- **`Notifier` (calendar) is the desktop-notification test seam.** Tests
+  inject a mock and assert on its call log — no dbus in `cargo test`;
+  the notify-rust live impl only runs from the app's reminder scheduler,
+  and it swallows daemon errors to a log line (never panics).
+- **Reminder fires are exactly-once per (reminder, occurrence).** The
+  `calendar_reminder_fires` ledger is the only write path
+  (`CalendarStore::upsert_fire` is idempotent); firing sets `fired_at`,
+  snooze re-opens the row with `snoozed_to_utc`. Never insert ledger rows
+  directly and never reset `fired_at` outside `snooze_fire`.
 - **Email passwords: keyring only** (service "adjutant", key
   "account/<id>"). Never in the DB, logs, toasts, or sync log.
 
