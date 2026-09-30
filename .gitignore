@@ -1,0 +1,8 @@
+/target
+*.db
+*.db-wal
+*.db-shm
+crash-*.log
+
+# Local session-quality hook artifacts
+quality_reports/

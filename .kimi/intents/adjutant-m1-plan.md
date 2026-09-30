@@ -19,15 +19,12 @@ Execute top-to-bottom. Context: greenfield repo `/home/jimmy/Projects/adjutant` 
 
 ## Step 0 — toolchain (prerequisite, ~2 min)
 
-```bash
-cd /home/jimmy/Projects/adjutant
-mise use rust@latest          # writes .mise.toml
-rustup component add clippy rustfmt 2>/dev/null || true  # mise rust ships these; no-op if present
-cargo --version               # must succeed
-git init && git add -A && git commit -m "chore: planning artifacts"
-# Remote repo: github.com/vincerhodes/adjutant (PUBLIC — Jimmy approved 2026-09-29)
-gh repo create vincerhodes/adjutant --public --source . --remote origin
-```
+DONE 2026-09-29 — mise rust plugin fails behind GFW (downloader ignores proxy env).
+Installed via rustup instead: Rust 1.98.1 stable + clippy + rustfmt at `~/.cargo/bin`
+(installed with `https_proxy=http://127.0.0.1:7897`). No `.mise.toml` — rustup is the
+toolchain manager for this repo. All cargo commands in this plan run with
+`export PATH="$HOME/.cargo/bin:$PATH" https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897`
+(crates.io downloads via Clash proxy).
 
 ## Step 1 — scaffold
 
@@ -102,7 +99,7 @@ Verify: `cargo run` — full manual pass of acceptance criteria (§ below).
 ## Step 6 — gates + docs
 
 1. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release` — all green.
-2. `README.md` (root): what Adjutant is (2-3 lines), M1 status, `mise trust && mise install && cargo run`, schema overview pointing at `migrations/`, data location + backup pointer (`VACUUM INTO`, never raw-copy live DB), known shortcut conflicts (Alt+arrows vs Hyprland binds).
+2. `README.md` (root): what Adjutant is (2-3 lines), M1 status, `cargo run` (Rust via rustup at `~/.cargo/bin`; `https_proxy=http://127.0.0.1:7897` needed for crate downloads behind GFW), schema overview pointing at `migrations/`, data location + backup pointer (`VACUUM INTO`, never raw-copy live DB), known shortcut conflicts (Alt+arrows vs Hyprland binds).
 3. `adjutant.desktop` (root, for manual install): `Exec=<target/release/adjutant path>`, `Name=Adjutant`, `Type=Application`, `Categories=Office;`, no icon in M1. README documents `cp adjutant.desktop ~/.local/share/applications/`.
 4. `AGENTS.md` (root): build/test commands, module layout rules (dependency direction), "no SQL in UI files", migration conventions (never edit applied migration; add new file).
 
