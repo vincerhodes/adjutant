@@ -4,6 +4,7 @@
 
 pub mod fonts;
 pub mod help;
+pub mod icons;
 pub mod placeholder;
 pub mod theme;
 

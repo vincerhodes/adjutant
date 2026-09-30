@@ -514,20 +514,24 @@ fn badge_presence_rules() {
         );
     h.run();
 
-    // Sub-count pill on the parent (two open children).
-    assert_eq!(h.query_all_by_label_contains("2 sub").count(), 1);
-    // Priority pills only for High/Urgent.
-    assert_eq!(h.query_all_by_label("High").count(), 1);
-    assert_eq!(h.query_all_by_label("Urgent").count(), 1);
+    // Sub-count chip on the parent (two open children).
+    assert_eq!(h.query_all_by_label_contains("2 sub-todos").count(), 1);
+    // Priority flags only for High/Urgent.
+    assert_eq!(h.query_all_by_label("high priority").count(), 1);
+    assert_eq!(h.query_all_by_label("urgent priority").count(), 1);
     assert_eq!(
-        h.query_all_by_label("Normal").count(),
+        h.query_all_by_label("normal priority").count(),
         0,
-        "Normal priority gets no pill on a folded card"
+        "Normal priority gets no chip on a folded card"
     );
-    // Blocked pill on the target of a live blocks link.
-    assert_eq!(h.query_all_by_label("Blocked").count(), 1);
-    // Status pill on every card.
-    assert_eq!(h.query_all_by_label("Open").count(), 6);
+    // Blocked chip on the target of a live blocks link.
+    assert_eq!(h.query_all_by_label("blocked").count(), 1);
+    // Open is the calm default: no status chip on any folded card.
+    assert_eq!(
+        h.query_all_by_label("open").count(),
+        0,
+        "open status shows no badge"
+    );
 }
 
 /// → unfolds the selected card (or moves to its first child when already

@@ -17,7 +17,8 @@ use crate::core::entity::{EntityRef, EntityType};
 use crate::core::link::{LinkStore, Relation};
 use crate::db::Db;
 use crate::todo::{Priority, Status, Todo, TodoError, TodoGroup, TodoNode, TodoStore};
-use crate::ui::{self, accent_of, fonts, theme};
+use crate::ui::icons::Icon;
+use crate::ui::{self, accent_of, fonts, icons, theme};
 
 /// Nested-card indent per level.
 const CHILD_INDENT_PX: f32 = 24.0;
@@ -787,68 +788,74 @@ impl TodoUi {
                     }
                 }
 
-                // Badges, right-aligned (spring via right-to-left layout).
+                // Symbol badges: icon chips, right-aligned (spring via
+                // right-to-left layout). Words live in tooltips/AccessKit.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Blocked: danger outline pill.
+                    // Blocked: circle-slash (danger).
                     if self.blocked.contains(&id) {
-                        badge_rects.push(pill(
-                            ui,
-                            "Blocked".to_string(),
-                            p.danger,
-                            Color32::TRANSPARENT,
-                            Some(p.danger),
-                        ));
+                        badge_rects
+                            .push(icons::chip(ui, Icon::CircleSlash, p.danger, "blocked").rect);
                     }
-                    // Sub-count: open descendants, when there are children.
+                    // Sub-count: branch icon + open descendant count.
                     if !node.children.is_empty() {
                         let open = open_descendants_excluding_self(node);
-                        badge_rects.push(pill(
+                        let (_, rect) = icons::chip_with_text(
                             ui,
-                            format!("{open} sub"),
+                            Icon::Branch,
                             p.muted,
-                            with_alpha(p.muted, 0.12),
-                            None,
-                        ));
+                            &open.to_string(),
+                            &format!("{open} sub-todos"),
+                        );
+                        badge_rects.push(rect);
                     }
-                    // Due: hidden for terminal todos; danger when overdue,
-                    // accent when due today, muted otherwise.
+                    // Due: clock + short date; hidden for terminal todos.
+                    // Danger when overdue, gold (attention) when due today.
                     if let Some(due) = todo.due_date {
                         if !todo.status.is_terminal() {
                             let today = Local::now().date_naive();
-                            let (fill, text_color) = if due < today {
-                                (p.danger, theme::contrast_on(&p, p.danger))
+                            let (icon_color, date) = if due < today {
+                                (p.danger, due.format("%b %-d").to_string())
                             } else if due == today {
-                                (p.accent, theme::contrast_on(&p, p.accent))
+                                (p.gold, due.format("%b %-d").to_string())
                             } else {
-                                (with_alpha(p.muted, 0.12), p.muted)
+                                (p.muted, due.format("%b %-d").to_string())
                             };
-                            badge_rects.push(pill(
+                            let (_, rect) = icons::chip_with_text(
                                 ui,
-                                due.format("%b %-d").to_string(),
-                                text_color,
-                                fill,
-                                None,
-                            ));
+                                Icon::Clock,
+                                icon_color,
+                                &date,
+                                &format!("due {date}"),
+                            );
+                            badge_rects.push(rect);
                         }
                     }
-                    // Priority: only High/Urgent get a pill.
+                    // Priority: flag only for High/Urgent.
                     if todo.priority.value() >= 2 {
-                        let fill = if todo.priority.value() == 3 {
-                            p.danger
+                        let (icon_color, label) = if todo.priority.value() == 3 {
+                            (p.danger, "urgent priority")
                         } else {
-                            p.warn
+                            (p.warn, "high priority")
                         };
-                        badge_rects.push(pill(
-                            ui,
-                            todo.priority.label().to_string(),
-                            theme::contrast_on(&p, fill),
-                            fill,
-                            None,
-                        ));
+                        badge_rects.push(icons::chip(ui, Icon::Flag, icon_color, label).rect);
                     }
-                    // Status pill.
-                    let (text, text_color, fill, outline) = status_pill_style(&p, todo.status);
-                    badge_rects.push(pill(ui, text.to_string(), text_color, fill, outline));
+                    // Status: icon only when NOT open (calm default).
+                    // Done sits on the mint positive-action pill (§8).
+                    match todo.status {
+                        Status::Open => {}
+                        Status::InProgress => {
+                            badge_rects.push(
+                                icons::chip(ui, Icon::CircleHalf, p.warn, "in progress").rect,
+                            );
+                        }
+                        Status::Done => {
+                            badge_rects.push(icons::chip(ui, Icon::Check, p.success, "done").rect);
+                        }
+                        Status::Cancelled => {
+                            badge_rects
+                                .push(icons::chip(ui, Icon::Cross, p.muted, "cancelled").rect);
+                        }
+                    }
                 });
             });
 
@@ -1497,40 +1504,6 @@ impl TodoUi {
 }
 
 // ── badge + color helpers ─────────────────────────────────────────────────
-
-/// A small rounded pill (12px text, 4px h-pad). Non-interactive; returns
-/// its rect so the card can exclude badge clicks from unfold toggling.
-fn pill(
-    ui: &mut Ui,
-    text: String,
-    text_color: Color32,
-    fill: Color32,
-    outline: Option<Color32>,
-) -> egui::Rect {
-    let frame = egui::Frame::new()
-        .fill(fill)
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .stroke(outline.map_or(Stroke::NONE, |c| Stroke::new(1.0, c)));
-    let inner = frame.show(ui, |ui| {
-        ui.label(RichText::new(text).size(12.0).color(text_color));
-    });
-    inner.response.rect
-}
-
-/// Status pill style: Open = muted outline, In progress = warn fill,
-/// Done = success fill, Cancelled = muted fill (title also struck through).
-fn status_pill_style(
-    p: &theme::Palette,
-    status: Status,
-) -> (&'static str, Color32, Color32, Option<Color32>) {
-    match status {
-        Status::Open => ("Open", p.muted, Color32::TRANSPARENT, Some(p.muted)),
-        Status::InProgress => ("In progress", theme::contrast_on(p, p.warn), p.warn, None),
-        Status::Done => ("Done", theme::contrast_on(p, p.success), p.success, None),
-        Status::Cancelled => ("Cancelled", theme::contrast_on(p, p.muted), p.muted, None),
-    }
-}
 
 fn open_descendants_excluding_self(node: &TodoNode) -> usize {
     node.open_descendant_count() - usize::from(!node.todo.status.is_terminal())
