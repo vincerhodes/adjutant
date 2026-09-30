@@ -407,7 +407,16 @@ fn linked_todos(ui: &mut Ui, db: &Db, email_id: Uuid) {
         .filter(|l| l.source.kind == EntityType::Reminder)
         .map(|l| l.source.id)
         .collect();
-    if todo_links.is_empty() && event_links.is_empty() && reminder_links.is_empty() {
+    let pad_links: Vec<Uuid> = links
+        .iter()
+        .filter(|l| l.source.kind == EntityType::Note)
+        .map(|l| l.source.id)
+        .collect();
+    if todo_links.is_empty()
+        && event_links.is_empty()
+        && reminder_links.is_empty()
+        && pad_links.is_empty()
+    {
         return;
     }
     ui.add_space(10.0);
@@ -460,6 +469,21 @@ fn linked_todos(ui: &mut Ui, db: &Db, email_id: Uuid) {
                 })
                 .unwrap_or_else(|_| "Unavailable".to_string());
             ui.label(RichText::new(format!("• {label}")).small());
+        }
+    }
+    if !pad_links.is_empty() {
+        ui.label(
+            RichText::new("Linked pads")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let store = crate::scratch::ScratchStore::new(db);
+        for id in pad_links {
+            let title = store
+                .get(id)
+                .map(|p| p.title().to_string())
+                .unwrap_or_else(|_| "Unavailable".to_string());
+            ui.label(RichText::new(format!("• {title}")).small());
         }
     }
 }

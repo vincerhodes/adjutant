@@ -15,6 +15,7 @@ use crate::calendar::CalendarStore;
 use crate::db::Db;
 use crate::email::sync::{live_factories, SyncEngine};
 use crate::email::ui::EmailUi;
+use crate::scratch::ui::ScratchUi;
 use crate::todo::ui::TodoUi;
 use crate::ui::{fonts, help, placeholder, theme};
 
@@ -49,6 +50,7 @@ pub struct AdjutantApp {
     todo: TodoUi,
     email: EmailUi,
     calendar: CalendarUi,
+    scratch: ScratchUi,
     sync: Option<SyncEngine>,
     theme: theme::ThemeWatcher,
     theme_choice: theme::ThemeChoice,
@@ -106,6 +108,7 @@ impl AdjutantApp {
             .flatten()
             .unwrap_or(false);
         let calendar = CalendarUi::new(&db);
+        let scratch = ScratchUi::new(&db);
         let mut todo = TodoUi::new(&db);
         if let Some(raw) = last_group {
             if let Ok(id) = Uuid::parse_str(&raw) {
@@ -122,6 +125,7 @@ impl AdjutantApp {
             todo,
             email: EmailUi::new(),
             calendar,
+            scratch,
             sync,
             theme: theme::ThemeWatcher::new(),
             theme_choice,
@@ -161,6 +165,11 @@ impl AdjutantApp {
     /// Database handle — exposed for tests.
     pub fn db(&self) -> &Db {
         &self.db
+    }
+
+    /// Scratch UI — exposed for tests (kittest drives `flush_pending`).
+    pub fn scratch(&mut self) -> &mut ScratchUi {
+        &mut self.scratch
     }
 
     fn handle_global_keys(&mut self, ctx: &Context) {
@@ -261,6 +270,7 @@ impl eframe::App for AdjutantApp {
             && !self.help_open
             && !self.todo.is_editing()
             && !self.calendar.is_busy()
+            && !self.scratch.is_busy()
             && ctx.input(|i| i.key_pressed(Key::Escape))
         {
             self.toggle_focus_mode();
@@ -315,13 +325,9 @@ impl eframe::App for AdjutantApp {
                         Module::Calendar,
                         Module::Scratchpad,
                     ] {
-                        if module != Module::Scratchpad {
-                            let active = self.module == module;
-                            if crate::ui::selectable(ui, active, module.label()).clicked() {
-                                self.module = module;
-                            }
-                        } else {
-                            placeholder::disabled_nav_item(ui, module.label());
+                        let active = self.module == module;
+                        if crate::ui::selectable(ui, active, module.label()).clicked() {
+                            self.module = module;
                         }
                     }
                     if self.module == Module::Todo {
@@ -419,11 +425,15 @@ impl eframe::App for AdjutantApp {
                     let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
                 }
             }
-            other => {
-                let name = other.label();
-                egui::CentralPanel::default().show(ui, |ui| {
-                    placeholder::placeholder_screen(ui, name);
-                });
+            Module::Scratchpad => {
+                let mut toasts = std::mem::take(&mut self.toasts);
+                let was_focus = self.focus_mode;
+                self.scratch
+                    .show(ui, &ctx, &self.db, &mut toasts, &mut self.focus_mode);
+                self.toasts = toasts;
+                if self.focus_mode != was_focus {
+                    let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
+                }
             }
         }
 

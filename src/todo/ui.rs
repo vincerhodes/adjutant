@@ -1438,6 +1438,28 @@ impl TodoUi {
                         }
                     }
                 }
+                // Scratch pad entries: link this todo to a pad (mentions).
+                let scratch_store = crate::scratch::ScratchStore::new(db);
+                if let Ok(pads) = scratch_store.search(&search, 5) {
+                    for (pad_id, title) in pads {
+                        let text = format!("Pad — {title}");
+                        let response = ui.add(
+                            egui::Label::new(RichText::new(text).small()).sense(Sense::click()),
+                        );
+                        if response.clicked() {
+                            *inner_clicked = true;
+                            let pad_ref = EntityRef::new(EntityType::Note, pad_id);
+                            match links.link(&target, &pad_ref, &Relation::from(Relation::MENTIONS))
+                            {
+                                Ok(()) => {
+                                    self.blocked_search.clear();
+                                    toasts.push("Linked pad".to_string());
+                                }
+                                Err(e) => toasts.push(e.to_string()),
+                            }
+                        }
+                    }
+                }
                 // Calendar entries: link this todo to an event (scheduled_as).
                 let calendar_store = crate::calendar::CalendarStore::new(db);
                 if let Ok(events) = calendar_store.search_events(&search, 5) {

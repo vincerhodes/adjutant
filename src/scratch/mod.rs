@@ -5,6 +5,7 @@
 //! and the entity_links CHECK pre-date this module — no core change).
 
 pub mod model;
+pub mod ui;
 
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{params, Connection};
