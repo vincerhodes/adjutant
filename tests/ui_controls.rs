@@ -1,9 +1,10 @@
-//! Headless UI tests (egui_kittest) for the new-todo editor wedge.
-//! No display needed — kittest drives egui with synthesized input and
-//! queries the AccessKit tree.
+//! Headless UI tests (egui_kittest) for the new-todo editor wedge and the
+//! mouse-parity controls. No display needed — kittest drives egui with
+//! synthesized input and queries the AccessKit tree.
 
 #![allow(clippy::unwrap_used)]
 
+use adjutant::app::AdjutantApp;
 use adjutant::db::Db;
 use adjutant::todo::ui::TodoUi;
 use adjutant::todo::TodoStore;
@@ -78,6 +79,8 @@ fn group_tree_titles(h: &Harness<'_, TodoHarnessState>) -> Vec<String> {
         .map(|n| n.todo.title)
         .collect()
 }
+
+// ── Item 1: the wedge ─────────────────────────────────────────────────────
 
 /// The original bug: Ctrl+N on an empty tree set editor state whose widget
 /// only rendered inside the non-empty-tree branch, wedging every key.
@@ -161,4 +164,162 @@ fn ctrl_n_does_not_fire_over_trash_view() {
     h.key_press_modifiers(Modifiers::CTRL, Key::F);
     h.run();
     assert_eq!(text_input_count(&h), 3);
+}
+
+// ── Item 2: mouse parity ──────────────────────────────────────────────────
+
+#[test]
+fn mouse_new_todo_button_matches_ctrl_n() {
+    let mut h = make_harness();
+    h.run();
+    h.get_by_label("+ New todo").click();
+    h.run();
+    assert_eq!(
+        text_input_count(&h),
+        1,
+        "\"+ New todo\" must open the editor on an empty tree"
+    );
+
+    h.get_by_role(Role::TextInput).focus();
+    h.run();
+    h.get_by_role(Role::TextInput).type_text("Via mouse");
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    assert_eq!(group_tree_titles(&h), vec!["Via mouse".to_string()]);
+}
+
+#[test]
+fn mouse_new_group_button_creates_group() {
+    let mut h = make_harness();
+    h.run();
+    h.get_by_label("+").click();
+    h.run();
+    assert_eq!(text_input_count(&h), 1, "sidebar group editor should open");
+
+    h.get_by_role(Role::TextInput).focus();
+    h.run();
+    h.get_by_role(Role::TextInput).type_text("Browzr");
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+
+    let app = h.state();
+    let names: Vec<String> = TodoStore::new(&app.db)
+        .list_groups()
+        .unwrap()
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
+    assert_eq!(names, vec!["Personal".to_string(), "Browzr".to_string()]);
+}
+
+#[test]
+fn mouse_add_sub_todo_from_detail_pane() {
+    let mut h = make_harness();
+    h.run();
+    h.get_by_label("+ New todo").click();
+    h.run();
+    h.get_by_role(Role::TextInput).focus();
+    h.run();
+    h.get_by_role(Role::TextInput).type_text("Parent");
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+    // Creating selects the todo and opens its title editor; close it.
+    h.key_press(Key::Escape);
+    h.run();
+
+    h.get_by_label("Add sub-todo").click();
+    h.run();
+    // Three single-line inputs now: due date + blocked-by search (detail
+    // pane) + new-sub-todo editor. The editor renders after the detail pane,
+    // so it's the last in the accesskit tree.
+    {
+        let inputs: Vec<_> = h.query_all_by_role(Role::TextInput).collect();
+        assert_eq!(
+            inputs.len(),
+            3,
+            "due date + blocked-by search + new-sub-todo editor"
+        );
+        inputs.last().unwrap().focus();
+    }
+    h.run();
+    {
+        let inputs: Vec<_> = h.get_all_by_role(Role::TextInput).collect();
+        inputs.last().unwrap().type_text("Child");
+    }
+    h.run();
+    h.key_press(Key::Enter);
+    h.run();
+
+    let app = h.state();
+    let store = TodoStore::new(&app.db);
+    let group = app.todo.current_group().unwrap();
+    let tree = store.tree(group).unwrap();
+    assert_eq!(tree.len(), 1);
+    assert_eq!(tree[0].todo.title, "Parent");
+    assert_eq!(tree[0].children.len(), 1);
+    assert_eq!(tree[0].children[0].todo.title, "Child");
+}
+
+#[test]
+fn mouse_move_up_reorders_siblings() {
+    let mut h = make_harness_with_todos();
+    h.run();
+    // Select B via arrow keys (avoids label ambiguity with the detail title).
+    h.key_press(Key::ArrowDown);
+    h.run();
+    h.key_press(Key::ArrowDown);
+    h.run();
+    assert_eq!(
+        group_tree_titles(&h),
+        vec!["A".to_string(), "B".to_string()]
+    );
+
+    h.get_by_label("Move up").click();
+    h.run();
+    assert_eq!(
+        group_tree_titles(&h),
+        vec!["B".to_string(), "A".to_string()]
+    );
+}
+
+#[test]
+fn mouse_filter_open_and_clear() {
+    let mut h = make_harness_with_todos();
+    h.run();
+    assert_eq!(text_input_count(&h), 0);
+
+    h.get_by_label("Filter…").click();
+    h.run();
+    assert_eq!(text_input_count(&h), 1, "Filter… opens the filter field");
+
+    h.get_by_label("✕").click();
+    h.run();
+    assert_eq!(text_input_count(&h), 0, "✕ clears the filter field");
+}
+
+#[test]
+fn mouse_help_button_toggles_overlay() {
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_eframe(move |cc| AdjutantApp::new(db, cc));
+    // The app requests a repaint every second (theme tick), so step a fixed
+    // number of frames instead of run().
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label_contains("Shortcuts").count(), 0);
+
+    h.get_by_label("Help").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.query_all_by_label_contains("Shortcuts").count(),
+        1,
+        "Help button should open the shortcut overlay"
+    );
+
+    h.get_by_label("Help").click();
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label_contains("Shortcuts").count(), 0);
 }

@@ -132,7 +132,20 @@ impl TodoUi {
     /// left panel.
     pub fn sidebar(&mut self, ui: &mut Ui, db: &Db) {
         ui.add_space(8.0);
-        ui.label(RichText::new("Groups").size(fonts::SIZE_SMALL).strong());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Groups").size(fonts::SIZE_SMALL).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui::ghost_button(ui, "+")
+                    .on_hover_text("New group (Ctrl+Shift+N)")
+                    .clicked()
+                {
+                    self.editor = Some(Editor {
+                        target: EditorTarget::NewGroup,
+                        buffer: String::new(),
+                    });
+                }
+            });
+        });
         ui.add_space(4.0);
 
         if self.groups.is_empty() && self.editor_new_group_active().is_none() {
@@ -374,8 +387,8 @@ impl TodoUi {
         });
     }
 
-    /// Open the new-todo editor (Ctrl+N). The new todo becomes a child of
-    /// the current selection, if any.
+    /// Open the new-todo editor (Ctrl+N / "+ New todo" button). The new todo
+    /// becomes a child of the current selection, if any.
     fn start_new_todo(&mut self, toasts: &mut Vec<String>) {
         if let Some(group) = self.current_group {
             let parent = self.selected;
@@ -435,11 +448,45 @@ impl TodoUi {
             );
             return;
         };
-        let _ = group;
+
+        // Tree header: group name left, actions right (ghost buttons, §7a).
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let name = self
+                .groups
+                .iter()
+                .find(|g| g.id == group)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            ui.label(RichText::new(name).size(fonts::SIZE_HEADING).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if self.filter_active
+                    && ui::ghost_button(ui, "✕")
+                        .on_hover_text("Clear filter (Esc)")
+                        .clicked()
+                {
+                    self.filter_active = false;
+                    self.filter.clear();
+                }
+                if ui::ghost_button(ui, "Filter…")
+                    .on_hover_text("Filter todos (Ctrl+F)")
+                    .clicked()
+                {
+                    self.filter_active = true;
+                }
+                if ui::ghost_button(ui, "+ New todo")
+                    .on_hover_text("New todo (Ctrl+N)")
+                    .clicked()
+                {
+                    self.start_new_todo(toasts);
+                }
+            });
+        });
+        ui.add_space(4.0);
 
         // Filter field (Ctrl+F).
         if self.filter_active {
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let mut filter = self.filter.clone();
                 let response = ui.add(
@@ -587,6 +634,23 @@ impl TodoUi {
             None
         }
         find(&self.tree, id, 0).unwrap_or(0)
+    }
+
+    /// Position of `id` among its siblings: (index, sibling count). Drives
+    /// the enabled/disabled state of the Move up/down buttons.
+    fn sibling_index(&self, id: Uuid) -> Option<(usize, usize)> {
+        fn find(nodes: &[TodoNode], id: Uuid) -> Option<(usize, usize)> {
+            for (i, n) in nodes.iter().enumerate() {
+                if n.todo.id == id {
+                    return Some((i, nodes.len()));
+                }
+                if let Some(r) = find(&n.children, id) {
+                    return Some(r);
+                }
+            }
+            None
+        }
+        find(&self.tree, id)
     }
 
     fn node_row(
@@ -950,6 +1014,53 @@ impl TodoUi {
             } else {
                 self.notes_buffer = Some((todo.id, notes_edit));
             }
+            ui.add_space(8.0);
+
+            // Mouse parity for keyboard shortcuts (§7a: ghost buttons).
+            ui.horizontal(|ui| {
+                if ui::ghost_button(ui, "Add sub-todo")
+                    .on_hover_text("New sub-todo of this item")
+                    .clicked()
+                {
+                    self.editor = Some(Editor {
+                        target: EditorTarget::NewTodo {
+                            group: todo.group_id,
+                            parent: Some(todo.id),
+                        },
+                        buffer: String::new(),
+                    });
+                    self.view = View::Tree;
+                    self.collapsed.remove(&todo.id);
+                }
+                let (index, count) = self.sibling_index(todo.id).unwrap_or((0, 1));
+                let accent = accent_of(ui);
+                let move_up =
+                    egui::Button::new(RichText::new("Move up").color(accent)).frame(false);
+                if ui
+                    .add_enabled(index > 0, move_up)
+                    .on_hover_text("Move up among siblings (Alt+↑)")
+                    .clicked()
+                {
+                    if let Err(e) = TodoStore::new(db).reorder(todo.id, true) {
+                        toasts.push(e.to_string());
+                    } else {
+                        self.dirty = true;
+                    }
+                }
+                let move_down =
+                    egui::Button::new(RichText::new("Move down").color(accent)).frame(false);
+                if ui
+                    .add_enabled(index + 1 < count, move_down)
+                    .on_hover_text("Move down among siblings (Alt+↓)")
+                    .clicked()
+                {
+                    if let Err(e) = TodoStore::new(db).reorder(todo.id, false) {
+                        toasts.push(e.to_string());
+                    } else {
+                        self.dirty = true;
+                    }
+                }
+            });
             ui.add_space(8.0);
 
             self.blocked_by_section(ui, db, &todo, toasts);

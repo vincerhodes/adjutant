@@ -161,6 +161,17 @@ impl eframe::App for AdjutantApp {
                     ui.separator();
                     self.todo.sidebar(ui, &self.db);
                 }
+                // Pin the help affordance to the sidebar bottom.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    ui.add_space(8.0);
+                    if crate::ui::ghost_button(ui, "Help")
+                        .on_hover_text("Keyboard shortcuts (F1)")
+                        .clicked()
+                    {
+                        self.help_open = !self.help_open;
+                    }
+                    ui.add_space(4.0);
+                });
             });
 
         match self.module {
