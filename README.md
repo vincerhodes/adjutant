@@ -22,6 +22,22 @@ cargo build --release
 cargo run
 ```
 
+## Email (M2)
+
+IMAP (rustls) + SMTP (lettre/rustls) with a background sync engine: one
+worker thread with its own WAL connection; per-account incremental sync
+(UIDVALIDITY-guarded, initial sync capped at the newest 500 headers per
+folder); bodies fetched on demand (plain text preferred, HTML-only →
+dumb tag-strip with raw HTML kept for a future renderer); offline write
+queue for mark-read/moves; JWZ-lite threading at ingest; staged outbox
+— nothing sends without human approval in the Outbox view. Passwords
+live in the OS keyring (secret-service) only — never in the DB.
+
+The `ImapTransport`/`SmtpTransport` traits are the test seam: all
+automated tests use scripted mocks, no live network in `cargo test`.
+Connecting a real account is a manual step: Manage accounts → Add
+account → Test connection.
+
 ## Data
 
 - Location: `$XDG_DATA_HOME/adjutant/` (usually `~/.local/share/adjutant/`).

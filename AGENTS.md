@@ -26,7 +26,10 @@ src/app.rs     eframe::App impl (nav, routing, theme, toasts)
 src/db/        Db handle, migration runner, settings — core persistence
 src/core/      entity types + generic link graph (no todo/ui deps)
 src/todo/      todo store (mod.rs, model.rs) + todo UI (ui.rs)
-src/ui/        shared widgets: theme, fonts, help overlay, placeholders
+src/email/     email store (mod.rs, model.rs), transports (imap_client.rs,
+               smtp.rs), sync engine (sync.rs), threading (thread.rs),
+               compose (compose.rs), UI (ui/)
+src/ui/        shared widgets: theme, fonts, icons, help overlay, placeholders
 ```
 
 Dependency direction is strictly **UI → module → core/db**. `core/` and
@@ -42,6 +45,11 @@ add `src/<module>/` + migrations as siblings — nothing else changes.
 - **Never edit an applied migration.** Schema changes = new
   `migrations/NNNN_name.sql` + extend the `MIGRATIONS` list in
   `src/db/migrate.rs` (embedded via `include_str!`; no runtime file reads).
+- **No live network in `cargo test`.** `ImapTransport`/`SmtpTransport`
+  are the test seam — tests inject scripted mocks; live impls only run
+  from the real app's sync engine.
+- **Email passwords: keyring only** (service "adjutant", key
+  "account/<id>"). Never in the DB, logs, toasts, or sync log.
 
 ## Data
 
