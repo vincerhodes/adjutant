@@ -181,6 +181,13 @@ impl LinkStore<'_> {
 
 ## 7a. Visual design (normative — "beautiful, functional, simple, not cluttered")
 
+> **PARTIALLY SUPERSEDED 2026-09-30** by `todo-cards-redesign-spec.md` (M1.5):
+> badges are now allowed (todo card pills), the right detail pane is deleted
+> (inline card expansion replaces it), built-in theme system with Light default
+> replaces Omarchy-follow as the default, layout gains collapsible sidebar +
+> focus mode. Principles 1–5 below still apply except where the M1.5 spec says
+> otherwise; the widget language section is amended by M1.5 §3.
+
 Principles (apply to every screen, M1 and future):
 1. **Content over chrome.** No visible box-drawing for its own sake: no nested frames, no bordered panels inside panels. Separation via spacing + subtle background steps, not strokes. Strokes only for focused/selected states.
 2. **One accent color.** Theme `accent` is the only saturated UI color — used for: selected nav item, primary action button, active checkbox, focused-field underline. Everything else: background ramp + foreground ramp.
