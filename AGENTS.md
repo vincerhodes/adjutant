@@ -32,6 +32,8 @@ src/email/     email store (mod.rs, model.rs), transports (imap_client.rs,
 src/calendar/  calendar store (mod.rs, model.rs), recurrence expansion
                (rrule.rs), reminder scheduler (reminders.rs), desktop
                notification seam (notify.rs), UI (ui/)
+src/scratch/   scratch pad store (mod.rs, model.rs) + UI (ui/) — plain-text
+               capture pads, autosave, link-graph notes (EntityType::Note)
 src/ui/        shared widgets: theme, fonts, icons, help overlay, placeholders
 ```
 

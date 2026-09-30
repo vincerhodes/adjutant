@@ -9,7 +9,8 @@ arbitrary-depth nesting, priorities, due dates, trash, `blocks` links).
 
 M1 (foundation + todo) — feature-complete, pending manual UI pass.
 
-M2 (email) and M3 (calendar) — implemented; pending manual UI pass.
+M2 (email), M3 (calendar) and M3.5 (scratch pad) — implemented; pending
+manual UI pass.
 
 ## Build & run
 
@@ -58,6 +59,18 @@ rows in `calendar_reminder_fires`).
 The `Notifier` trait is the test seam: tests assert on a mock's call
 log, no dbus in `cargo test`. Timezone handling uses `chrono-tz`;
 the event form's TZ picker defaults to the system zone.
+
+## Scratch Pad (M3.5)
+
+Quick-capture plain-text pads — click, type, done. One screen: cards
+(two-line idiom — first line as title, recency stamp, color dot) ordered
+pinned-first then by last edit, Trash view with the standard 30-day
+purge. Editing unfolds the card in place and autosaves after a 500ms
+idle pause (flushed on fold); Ctrl+N drafts a pad that only materializes
+on first keystroke. Color cycles the same 6-dot palette as groups and
+events. Pads are link-graph notes (`EntityType::Note`) — the todo link
+picker surfaces them and the email reading pane lists linked pads.
+No markdown, no search, no sync — raw text survives any future renderer.
 
 ## Data
 
