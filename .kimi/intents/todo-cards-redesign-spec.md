@@ -72,3 +72,35 @@ Trash view (restyle rows as slim cards), group sidebar list, filter, all store/D
 ## 7. Non-goals
 
 No settings screen/dialog (theme picker is a popup), no custom user palettes, no per-module themes, no animation work beyond egui defaults, no changes to email/calendar/scratchpad placeholders beyond inheriting the palette.
+
+## 8. HEY polish pass (2026-09-30, Jimmy: "bland… symbols over words… aim for a HEY email aesthetic")
+
+Reference: hey.com app UI (Imbox). Translated principles:
+
+**Palette & surface:**
+- Light theme reworked to HEY-inspired: app bg warm light grey `#F4F1EC`, cards pure white `#FFFFFF`, text near-black `#14171A`, muted `#8A8F98`, accent violet `#5B4BC4` (HEY purple), gold `#F2C94C` reserved for "new/attention" highlights. Semantic: success `#2FA46A`, warn `#E8A13D`, danger `#E4574C`, mint `#D9F4EA` for positive action pills. Other four themes keep their identities but inherit all structural changes below.
+- Cards: taller (56px folded), radius 10, white fill, **soft drop shadow** (epaint Shadow, subtle, no border in Light), hover = shadow deepens slightly (no fill change in Light; fill change retained in dark themes). Unfolded card radius 12.
+
+**Typography (the biggest blandness fix):**
+- Group heading: 26px heavy (egui FontId weight — if system font lacks a heavy cut, fake via 2x oversample? NO — pick the boldest available family face; document fallback), near-black, above the list Imbox-style.
+- Card titles: 16px semi-bold near-black. Badges/meta: 12px. Muted stays muted.
+- More air: card vertical padding up, list top margin 24px, gap between cards 10px.
+
+**Symbol badges (replace word pills wherever possible):**
+Painter-drawn mini-icons — NOT font glyphs (tofu lesson from M1: font coverage is unreliable). New `src/ui/icons.rs` with small painter primitives, each ~14px, themeable, crisp at any zoom:
+- Status: open = circle outline (muted) · in_progress = half-filled circle (warn) · done = check (success) · cancelled = cross (muted). On folded cards show ONLY when not open (calm default: open needs no badge).
+- Priority: flag (warn = high, danger = urgent). No icon for low/normal.
+- Due: clock face + short date text (`Oct 3`), colored by urgency as before.
+- Sub-count: branching/indent icon + number.
+- Blocked: circle-slash (danger).
+- Each icon sits in a soft-tinted 22px circle chip (icon color at 12% alpha bg) — the HEY avatar-circle echo that gives colorful pops. Tooltips keep the words (accessibility + discoverability).
+- Segmented rows in unfolded cards keep words (status/priority) — symbols are for folded-card badges; editing controls stay textual.
+
+**Group identity (HEY avatar echo):**
+- Each sidebar group gets a 10px colored dot, color derived by hashing group id into a fixed 6-color HEY-ish cycle (violet, gold, mint, salmon, sky, rose). Stable per group. Used in sidebar and as a small dot before the group heading.
+
+**Layout:**
+- List column centered with max width ~860px when window is wide (HEY's focused column feel) in normal mode; full width in focus mode. Cards never stretch beyond readability.
+- Folded card content: checkbox → title → spring → icon chips. Unfolded: same chrome as now, more padding.
+
+**What does NOT change:** themes count/picker, focus mode, keyboard contract, store layers, tests philosophy. Update contrast-floor test to new palette; add icon smoke test (icons module paints without panic at several sizes — painter ops are testable via a headless Painter on a 1x1 ctx).
