@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use adjutant::app::AdjutantApp;
 use adjutant::calendar::CalendarStore;
 use adjutant::db::Db;
+use adjutant::scratch::ScratchStore;
 use adjutant::todo::TodoStore;
 
 fn main() -> ExitCode {
@@ -52,6 +53,11 @@ fn main() -> ExitCode {
         Ok(0) => {}
         Ok(n) => println!("adjutant: purged {n} expired trashed event(s)"),
         Err(e) => eprintln!("adjutant: calendar trash purge failed: {e:#}"),
+    }
+    match ScratchStore::new(&db).purge_expired() {
+        Ok(0) => {}
+        Ok(n) => println!("adjutant: purged {n} expired trashed pad(s)"),
+        Err(e) => eprintln!("adjutant: scratch trash purge failed: {e:#}"),
     }
 
     let options = eframe::NativeOptions {

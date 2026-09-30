@@ -18,6 +18,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0003_calendar",
         include_str!("../../migrations/0003_calendar.sql"),
     ),
+    (
+        "0004_scratchpad",
+        include_str!("../../migrations/0004_scratchpad.sql"),
+    ),
 ];
 
 pub fn run(conn: &Connection) -> Result<(), DbError> {

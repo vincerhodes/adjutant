@@ -5,5 +5,6 @@ pub mod calendar;
 pub mod core;
 pub mod db;
 pub mod email;
+pub mod scratch;
 pub mod todo;
 pub mod ui;

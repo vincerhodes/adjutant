@@ -48,13 +48,13 @@ fn all_day_input(start: &str, end: &str) -> EventInput {
 // ── Schema ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn migration_applies_user_version_3_and_all_triggers() {
+fn migration_applies_user_version_4_and_all_triggers() {
     let db = mem_db();
     let v: i64 = db
         .conn()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
     for table in [
         "calendar_events",
         "calendar_attendees",
