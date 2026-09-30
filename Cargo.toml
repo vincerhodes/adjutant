@@ -19,3 +19,6 @@ libc = "0.2"          # unix flock for single-instance lock
 
 [lints.clippy]
 unwrap_used = "warn"
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe"] }

@@ -118,6 +118,7 @@ impl TodoUi {
         if group != self.current_group {
             self.current_group = group;
             self.selected = None;
+            self.editor = None;
             self.dirty = true;
             self.reload(db, None);
         }
@@ -159,6 +160,7 @@ impl TodoUi {
         }
         if let Some((group, view)) = activate {
             self.view = view;
+            self.editor = None; // editors reference todos of the old group
             self.set_current_group(db, Some(group));
         }
 
@@ -198,6 +200,7 @@ impl TodoUi {
             .clicked()
         {
             self.view = View::Trash;
+            self.editor = None; // tree editors don't render over the trash list
             self.dirty = true;
         }
     }
@@ -302,8 +305,13 @@ impl TodoUi {
     // ── keyboard ──────────────────────────────────────────────────────────
 
     fn handle_keys(&mut self, ctx: &Context, db: &Db, toasts: &mut Vec<String>) {
-        // Editing takes precedence over tree navigation.
         if self.editor.is_some() {
+            // Escape must always cancel, even when the editor's widget isn't
+            // rendered this frame — an invisible editor would otherwise wedge
+            // every key until restart.
+            if ctx.input(|i| i.key_pressed(Key::Escape)) {
+                self.editor = None;
+            }
             return;
         }
         ctx.input(|i| {
@@ -318,14 +326,10 @@ impl TodoUi {
                 // Handled by the app; ignored here.
             }
             if i.modifiers.ctrl && i.key_pressed(Key::N) && !i.modifiers.shift {
-                if let Some(group) = self.current_group {
-                    let parent = self.selected;
-                    self.editor = Some(Editor {
-                        target: EditorTarget::NewTodo { group, parent },
-                        buffer: String::new(),
-                    });
-                } else {
-                    toasts.push("Create a group first (Ctrl+Shift+N)".to_string());
+                // Only meaningful in the tree view; the editor widget
+                // doesn't render over the trash list.
+                if self.view == View::Tree {
+                    self.start_new_todo(toasts);
                 }
             }
             if i.key_pressed(Key::Space) {
@@ -368,6 +372,20 @@ impl TodoUi {
                 }
             }
         });
+    }
+
+    /// Open the new-todo editor (Ctrl+N). The new todo becomes a child of
+    /// the current selection, if any.
+    fn start_new_todo(&mut self, toasts: &mut Vec<String>) {
+        if let Some(group) = self.current_group {
+            let parent = self.selected;
+            self.editor = Some(Editor {
+                target: EditorTarget::NewTodo { group, parent },
+                buffer: String::new(),
+            });
+        } else {
+            toasts.push("Create a group first (Ctrl+Shift+N)".to_string());
+        }
     }
 
     fn move_selection(&mut self, down: bool) {
@@ -452,13 +470,33 @@ impl TodoUi {
         ui.add_space(8.0);
 
         if self.tree.is_empty() {
-            ui::empty_state(ui, "Nothing here yet", "Ctrl+N to create your first todo");
+            // The new-todo editor must render even with an empty tree — its
+            // Esc/Enter handling lives in the widget, and an unrendered
+            // editor wedges every key.
+            self.new_todo_row(ui, db, toasts);
+            if self.editor.is_none() {
+                ui::empty_state(ui, "Nothing here yet", "Ctrl+N to create your first todo");
+            }
             return;
         }
 
         self.visible_order.clear();
         let nodes = self.tree.clone();
-        let filter = self.filter.clone();
+        // Suspend filtering while a title is being edited: the edited row
+        // would otherwise vanish from the tree the moment its buffer stops
+        // matching, stranding the editor.
+        let title_editing = matches!(
+            self.editor,
+            Some(Editor {
+                target: EditorTarget::Title(_),
+                ..
+            })
+        );
+        let filter = if title_editing {
+            String::new()
+        } else {
+            self.filter.clone()
+        };
         let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
         scroll.show(ui, |ui| {
             for node in &nodes {
@@ -673,11 +711,24 @@ impl TodoUi {
             }
         }
 
-        if !self.collapsed.contains(&node.todo.id) {
+        if !self.collapsed.contains(&node.todo.id) || self.editing_inside(node) {
             for child in &node.children {
                 self.node_row(ui, child, depth + 1, filter, db, toasts);
             }
         }
+    }
+
+    /// True when a title editor is open somewhere inside this subtree — the
+    /// subtree must stay expanded or the editor's widget would vanish.
+    fn editing_inside(&self, node: &TodoNode) -> bool {
+        let Some(Editor {
+            target: EditorTarget::Title(id),
+            ..
+        }) = self.editor
+        else {
+            return false;
+        };
+        node.todo.id == id || node.children.iter().any(|c| self.editing_inside(c))
     }
 
     fn title_editor(&mut self, ui: &mut Ui, id: Uuid, db: &Db, _toasts: &mut Vec<String>) {
