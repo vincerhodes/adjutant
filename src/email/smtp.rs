@@ -31,7 +31,8 @@ impl LiveSmtp {
         password: &str,
     ) -> Result<Self, EmailError> {
         use lettre::transport::smtp::authentication::Credentials;
-        let transport = lettre::SmtpTransport::relay(host)
+        let host = crate::email::imap_client::normalize_host(host);
+        let transport = lettre::SmtpTransport::relay(&host)
             .map_err(|e| EmailError::Smtp(format!("{e:?}")))?
             .port(port)
             .credentials(Credentials::new(username.to_string(), password.to_string()))

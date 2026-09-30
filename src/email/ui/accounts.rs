@@ -238,16 +238,26 @@ fn save_account(db: &Db, form: &AccountForm, toasts: &mut Vec<String>) -> Result
     if form.label.trim().is_empty() || form.address.trim().is_empty() {
         return Err("Label and address are required".to_string());
     }
+    // Validation before anything touches the DB.
+    let imap_host = crate::email::imap_client::normalize_host(&form.imap_host);
+    let smtp_host = crate::email::imap_client::normalize_host(&form.smtp_host);
+    let username = form.username.trim().to_string();
+    if imap_host.is_empty() || smtp_host.is_empty() {
+        return Err("IMAP and SMTP hosts are required".to_string());
+    }
+    if username.is_empty() {
+        return Err("Username is required".to_string());
+    }
     let id = match form.editing_id {
         Some(id) => {
             let mut account = store.get_account(id).map_err(|e| e.to_string())?;
             account.label = form.label.trim().to_string();
             account.address = form.address.trim().to_string();
-            account.imap_host = form.imap_host.trim().to_string();
+            account.imap_host = imap_host;
             account.imap_port = port(&form.imap_port, 993);
-            account.smtp_host = form.smtp_host.trim().to_string();
+            account.smtp_host = smtp_host;
             account.smtp_port = port(&form.smtp_port, 465);
-            account.username = form.username.trim().to_string();
+            account.username = username;
             account.sync_interval_s = interval.max(60);
             store.update_account(&account).map_err(|e| e.to_string())?;
             id
@@ -259,11 +269,11 @@ fn save_account(db: &Db, form: &AccountForm, toasts: &mut Vec<String>) -> Result
                 .create_account(&NewAccount {
                     label: form.label.trim(),
                     address: form.address.trim(),
-                    imap_host: form.imap_host.trim(),
+                    imap_host: &imap_host,
                     imap_port: port(&form.imap_port, 993),
-                    smtp_host: form.smtp_host.trim(),
+                    smtp_host: &smtp_host,
                     smtp_port: port(&form.smtp_port, 465),
-                    username: form.username.trim(),
+                    username: &username,
                     color_idx,
                     sync_interval_s: interval.max(60),
                 })

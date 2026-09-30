@@ -107,6 +107,34 @@ pub fn detect_folder_role(name: &str, attributes: &[String]) -> crate::email::mo
     }
 }
 
+/// Normalize a user-entered host: trim whitespace and strip ONE trailing
+/// ":<digits>" (users paste "imap.example.com:993" into the host field).
+/// Bracketed IPv6 is preserved: `[::1]:993` → `[::1]`, bare `[2001:db8::1]`
+/// untouched. The port field always wins over an embedded port.
+pub fn normalize_host(host: &str) -> String {
+    let trimmed = host.trim();
+    if trimmed.starts_with('[') {
+        // Bracketed IPv6: only strip a port after the closing bracket.
+        if let Some(close) = trimmed.find(']') {
+            let rest = &trimmed[close + 1..];
+            if let Some(port) = rest.strip_prefix(':') {
+                if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+                    return trimmed[..=close].to_string();
+                }
+            }
+        }
+        return trimmed.to_string();
+    }
+    match trimmed.rsplit_once(':') {
+        Some((h, port))
+            if !h.is_empty() && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            h.to_string()
+        }
+        _ => trimmed.to_string(),
+    }
+}
+
 /// Live IMAP session over TLS (rustls).
 pub struct LiveImap {
     session: imap::Session<imap::Connection>,
@@ -122,7 +150,8 @@ impl LiveImap {
         username: &str,
         password: &str,
     ) -> Result<Self, EmailError> {
-        let client = imap::ClientBuilder::new(host, port)
+        let host = normalize_host(host);
+        let client = imap::ClientBuilder::new(&host, port)
             .connect()
             .map_err(|e| EmailError::Imap(format!("connect: {}", sanitize_imap_error(&e))))?;
         let session = client
@@ -396,4 +425,67 @@ fn parse_rfc2822_date(value: &str) -> Option<String> {
     chrono::DateTime::parse_from_rfc2822(value)
         .ok()
         .map(|d| d.with_timezone(&chrono::Utc).to_rfc3339())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_host;
+
+    #[test]
+    fn normalize_host_strips_embedded_port() {
+        assert_eq!(
+            normalize_host("imap.purelymail.com:993"),
+            "imap.purelymail.com"
+        );
+        assert_eq!(
+            normalize_host("smtp.purelymail.com:465"),
+            "smtp.purelymail.com"
+        );
+        assert_eq!(
+            normalize_host("imap.purelymail.com:143"),
+            "imap.purelymail.com"
+        );
+    }
+
+    #[test]
+    fn normalize_host_bare_and_whitespace() {
+        assert_eq!(normalize_host("imap.purelymail.com"), "imap.purelymail.com");
+        assert_eq!(
+            normalize_host("  imap.purelymail.com  "),
+            "imap.purelymail.com"
+        );
+        assert_eq!(
+            normalize_host("\timap.purelymail.com\t"),
+            "imap.purelymail.com"
+        );
+    }
+
+    #[test]
+    fn normalize_host_ipv6_brackets_preserved() {
+        // Bracketed IPv6 with a port: strip the port, keep the brackets.
+        assert_eq!(normalize_host("[::1]:993"), "[::1]");
+        assert_eq!(normalize_host("[2001:db8::1]:465"), "[2001:db8::1]");
+        // Bare bracketed IPv6 has no trailing port to strip.
+        assert_eq!(normalize_host("[2001:db8::1]"), "[2001:db8::1]");
+        assert_eq!(normalize_host("[::1]"), "[::1]");
+    }
+
+    #[test]
+    fn normalize_host_non_numeric_ports_left_alone() {
+        assert_eq!(
+            normalize_host("imap.example.com:abc"),
+            "imap.example.com:abc"
+        );
+        // Only ONE trailing ":digits" is stripped.
+        assert_eq!(normalize_host("host:993:993"), "host:993");
+        // Empty host/port parts are not stripped.
+        assert_eq!(normalize_host(":993"), ":993");
+        assert_eq!(normalize_host("host:"), "host:");
+    }
+
+    #[test]
+    fn normalize_host_empty() {
+        assert_eq!(normalize_host(""), "");
+        assert_eq!(normalize_host("   "), "");
+    }
 }
