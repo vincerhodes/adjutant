@@ -28,37 +28,45 @@ pub fn show(calendar: &mut CalendarUi, ui: &mut Ui, db: &Db) {
             let hovered = calendar.hovered.contains(&occ.event_id);
             let dot = icons::GROUP_DOT_COLORS[occ.color_idx.clamp(0, 5) as usize];
             let frame = ui::card_frame(ui, hovered, false);
-            let response = frame
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        icons::group_dot(ui, dot, 8.0);
-                        ui.vertical(|ui| {
+            let inner = frame.show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    icons::group_dot(ui, dot, 8.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(occ.title.clone())
+                                .size(ui::fonts::SIZE_CARD_TITLE)
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new(format!(
+                                "{} · {}",
+                                occurrence_day_label(occ, now),
+                                occurrence_time_label(occ),
+                            ))
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                        if !occ.location.is_empty() {
                             ui.label(
-                                RichText::new(occ.title.clone())
-                                    .size(ui::fonts::SIZE_CARD_TITLE)
-                                    .strong(),
+                                RichText::new(occ.location.clone())
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
                             );
-                            ui.label(
-                                RichText::new(format!(
-                                    "{} · {}",
-                                    occurrence_day_label(occ, now),
-                                    occurrence_time_label(occ),
-                                ))
-                                .small()
-                                .color(ui.visuals().weak_text_color()),
-                            );
-                            if !occ.location.is_empty() {
-                                ui.label(
-                                    RichText::new(occ.location.clone())
-                                        .small()
-                                        .color(ui.visuals().weak_text_color()),
-                                );
-                            }
-                        });
+                        }
                     });
-                })
-                .response
+                });
+            });
+            let response = ui
+                .interact(
+                    inner.response.rect,
+                    ui.id().with((
+                        "upcoming-card",
+                        occ.event_id,
+                        occurrence_day_label(occ, now),
+                    )),
+                    egui::Sense::click(),
+                )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if response.hovered() {
                 calendar.hovered.insert(occ.event_id);

@@ -105,6 +105,7 @@ impl CalendarUi {
 
         let mut form = self.form.take();
         if let Some(f) = form.as_mut() {
+            f.handle_key(ctx);
             if !f.show(ctx, db, toasts) {
                 form = None;
                 self.dirty = true;
@@ -274,41 +275,48 @@ pub fn occurrence_card(
     title: &str,
     location: &str,
 ) -> egui::Response {
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let frame = ui::card_frame(ui, hovered, false);
-        frame.show(ui, |ui| {
-            ui.set_min_width(140.0);
-            ui.set_max_width(200.0);
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    icons::group_dot(ui, dot, 8.0);
+    let frame_response = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let frame = ui::card_frame(ui, hovered, false);
+            frame.show(ui, |ui| {
+                ui.set_min_width(140.0);
+                ui.set_max_width(200.0);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        icons::group_dot(ui, dot, 8.0);
+                        ui.label(
+                            egui::RichText::new(day)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    });
                     ui.label(
-                        egui::RichText::new(day)
+                        egui::RichText::new(title)
+                            .size(ui::fonts::SIZE_CARD_TITLE)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(time)
                             .small()
                             .color(ui.visuals().weak_text_color()),
                     );
+                    if !location.is_empty() {
+                        ui.label(
+                            egui::RichText::new(location)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
                 });
-                ui.label(
-                    egui::RichText::new(title)
-                        .size(ui::fonts::SIZE_CARD_TITLE)
-                        .strong(),
-                );
-                ui.label(
-                    egui::RichText::new(time)
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
-                if !location.is_empty() {
-                    ui.label(
-                        egui::RichText::new(location)
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                }
-            });
+            })
         })
-    })
-    .response
+        .response;
+    // The frame's own response is hover-sense; layer a click interacter.
+    ui.interact(
+        frame_response.rect,
+        ui.id().with(("occ-card", title, day)),
+        egui::Sense::click(),
+    )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
