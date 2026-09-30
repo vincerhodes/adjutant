@@ -14,7 +14,7 @@ use crate::core::entity::{EntityRef, EntityType};
 use crate::core::link::{LinkStore, Relation};
 use crate::db::Db;
 use crate::todo::{Priority, Status, Todo, TodoError, TodoGroup, TodoNode, TodoStore};
-use crate::ui::{self, accent_of, fonts};
+use crate::ui::{self, accent_of, fonts, theme};
 
 const INDENT_PX: f32 = 20.0;
 /// Visual indent caps at this depth (plan risk 5); structure stays unbounded.
@@ -692,11 +692,7 @@ impl TodoUi {
             // Collapse toggle for parents.
             if !node.children.is_empty() {
                 let collapsed = self.collapsed.contains(&node.todo.id);
-                let arrow = if collapsed { "▸" } else { "▾" };
-                if ui
-                    .add(egui::Label::new(RichText::new(arrow).small()).sense(Sense::click()))
-                    .clicked()
-                {
+                if ui::collapse_arrow(ui, collapsed).clicked() {
                     if collapsed {
                         self.collapsed.remove(&node.todo.id);
                     } else {
@@ -707,10 +703,9 @@ impl TodoUi {
                 ui.add_space(14.0);
             }
 
-            // Checkbox (accent when checked via theme active fill).
-            let mut checked = node.todo.status == Status::Done;
-            let check = ui.add(egui::Checkbox::new(&mut checked, ""));
-            if check.changed() {
+            // Checkbox (custom-painted: visible outline, accent when checked).
+            let checked = node.todo.status == Status::Done;
+            if ui::todo_checkbox(ui, checked).clicked() {
                 match self.toggle_done(db, node.todo.id) {
                     Ok(()) => {}
                     Err(e) => toasts.push(e),
@@ -1259,8 +1254,9 @@ fn count_matches(nodes: &[TodoNode], filter: &str) -> usize {
 fn status_color(ui: &Ui, status: Status) -> Color32 {
     match status {
         Status::Open => ui.visuals().text_color(),
+        // §7a: in_progress = theme yellow, done = theme green.
         Status::InProgress => ui.visuals().warn_fg_color,
-        Status::Done => ui.visuals().weak_text_color(),
+        Status::Done => theme::success_color(ui),
         Status::Cancelled => ui.visuals().weak_text_color(),
     }
 }

@@ -89,6 +89,38 @@ fn empty_content_is_not_a_palette() {
 }
 
 #[test]
+fn muted_text_has_a_contrast_floor() {
+    fn luma(c: egui::Color32) -> f32 {
+        (0.2126 * f32::from(c.r()) + 0.7152 * f32::from(c.g()) + 0.0722 * f32::from(c.b())) / 255.0
+    }
+
+    // Pathological palette: muted identical to the background.
+    let p = Palette::parse(
+        r##"
+mode = "dark"
+background = "#121212"
+dark_background = "#121212"
+foreground = "#e0e0e0"
+muted = "#121212"
+accent = "#3366ff"
+"##,
+    )
+    .expect("parse");
+    let v = theme::visuals(&p);
+    let weak = v.weak_text_color();
+    for surface in [v.window_fill, v.panel_fill] {
+        assert!(
+            (luma(weak) - luma(surface)).abs() >= 0.25,
+            "weak text must keep luma distance ≥ 0.25 from every surface"
+        );
+    }
+    // A healthy palette is left untouched.
+    let healthy = Palette::parse(AETHER_LIKE).expect("parse");
+    let healthy_weak = theme::visuals(&healthy).weak_text_color();
+    assert_eq!(healthy_weak, healthy.muted);
+}
+
+#[test]
 fn theme_watcher_falls_back_without_crashing() {
     // No Omarchy install (or one) — watcher must always yield a palette.
     let watcher = theme::ThemeWatcher::new();

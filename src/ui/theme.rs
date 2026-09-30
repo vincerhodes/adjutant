@@ -147,7 +147,63 @@ pub fn visuals(p: &Palette) -> Visuals {
     v.error_fg_color = p.red;
     v.text_edit_bg_color = Some(p.darker_background);
     v.button_frame = false;
+    // Legibility floor: weak/muted text must keep a minimum luma distance
+    // from every surface it can sit on, else it blends toward foreground.
+    v.weak_text_color = Some(ensure_contrast(p.muted, fg, &[bg, panel], 0.25));
     v
+}
+
+/// Blend `muted` toward `fg` until its luma distance from every surface in
+/// `surfaces` is at least `min_dist`. Bounds the worst-case contrast of
+/// placeholder/disabled/hint text on pathological palettes.
+pub fn ensure_contrast(
+    muted: Color32,
+    fg: Color32,
+    surfaces: &[Color32],
+    min_dist: f32,
+) -> Color32 {
+    let mut m = muted;
+    for _ in 0..16 {
+        let worst = surfaces
+            .iter()
+            .map(|s| (luma(m) - luma(*s)).abs())
+            .fold(0.0_f32, f32::max);
+        if worst >= min_dist {
+            return m;
+        }
+        m = blend_toward(m, fg, 0.2);
+    }
+    m
+}
+
+fn luma(c: Color32) -> f32 {
+    (0.2126 * f32::from(c.r()) + 0.7152 * f32::from(c.g()) + 0.0722 * f32::from(c.b())) / 255.0
+}
+
+fn blend_toward(c: Color32, target: Color32, t: f32) -> Color32 {
+    let ch =
+        |a: u8, b: u8| -> u8 { (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8 };
+    Color32::from_rgb(
+        ch(c.r(), target.r()),
+        ch(c.g(), target.g()),
+        ch(c.b(), target.b()),
+    )
+}
+
+const SUCCESS_ID: &str = "adjutant.theme.success";
+
+/// egui `Visuals` has no success/green slot — stash the palette's green in
+/// egui's data store so UI code can color done-states per §7a.
+pub fn store_semantic_colors(ctx: &egui::Context, p: &Palette) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::new(SUCCESS_ID), p.green));
+}
+
+/// Theme green (done status), falling back to the built-in palette when the
+/// theme has not been applied to this context yet.
+pub fn success_color(ui: &egui::Ui) -> Color32 {
+    ui.ctx()
+        .data_mut(|d| d.get_persisted(egui::Id::new(SUCCESS_ID)))
+        .unwrap_or_else(|| Palette::fallback().green)
 }
 
 /// Resolve the active Omarchy theme file:

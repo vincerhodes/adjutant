@@ -127,6 +127,7 @@ impl eframe::App for AdjutantApp {
         if self.first_frame || self.theme_dirty {
             let visuals = theme::visuals(self.theme.palette());
             ctx.set_visuals(visuals);
+            theme::store_semantic_colors(&ctx, self.theme.palette());
             self.first_frame = false;
             self.theme_dirty = false;
         }

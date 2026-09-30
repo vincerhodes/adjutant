@@ -51,7 +51,13 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
 /// The one ghost button style: no fill, accent text, hover fill.
 pub fn ghost_button(ui: &mut Ui, text: &str) -> Response {
     let accent = accent_of(ui);
-    let response = ui.add(egui::Button::new(RichText::new(text).color(accent)).frame(false));
+    ghost_button_with(ui, text, accent)
+}
+
+/// Ghost button with an explicit text color (e.g. foreground for persistent
+/// affordances like Help, red for destructive actions).
+pub fn ghost_button_with(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    let response = ui.add(egui::Button::new(RichText::new(text).color(color)).frame(false));
     response
 }
 
@@ -87,4 +93,74 @@ pub fn focused_underline(ui: &Ui, response: &Response) {
             Stroke::new(1.5, accent_of(ui)),
         );
     }
+}
+
+/// 18px todo checkbox, fully painter-drawn: the stock egui 0.36 checkbox
+/// takes its outline color from widget-state visuals and cannot be styled
+/// per-instance. Unchecked = visible muted outline; checked = accent fill
+/// with a background-colored tick.
+pub fn todo_checkbox(ui: &mut Ui, checked: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let accent = accent_of(ui);
+        let box_rect = rect.shrink(1.0);
+        let corner = egui::CornerRadius::same(3);
+        if checked {
+            ui.painter().rect_filled(box_rect, corner, accent);
+            let tick = box_rect.shrink(4.0);
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    egui::pos2(tick.left(), tick.center().y),
+                    egui::pos2(tick.center().x, tick.bottom()),
+                    egui::pos2(tick.right(), tick.top()),
+                ],
+                Stroke::new(2.0, ui.visuals().window_fill),
+            ));
+        } else {
+            let outline = if response.hovered() {
+                ui.visuals().text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            ui.painter().rect_stroke(
+                box_rect,
+                corner,
+                Stroke::new(1.5, outline),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    response
+}
+
+/// Painter-drawn collapse triangle for tree rows. The ▸/▾ glyphs are not in
+/// the loaded UI fonts (tofu) — drawing the triangle avoids any glyph
+/// dependency and stays crisp at any zoom.
+pub fn collapse_arrow(ui: &mut Ui, collapsed: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if response.hovered() {
+            accent_of(ui)
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let c = rect.center();
+        let h = 4.0;
+        let points = if collapsed {
+            vec![
+                egui::pos2(c.x - h * 0.7, c.y - h),
+                egui::pos2(c.x - h * 0.7, c.y + h),
+                egui::pos2(c.x + h, c.y),
+            ]
+        } else {
+            vec![
+                egui::pos2(c.x - h, c.y - h * 0.7),
+                egui::pos2(c.x + h, c.y - h * 0.7),
+                egui::pos2(c.x, c.y + h),
+            ]
+        };
+        ui.painter()
+            .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+    }
+    response
 }
