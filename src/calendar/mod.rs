@@ -9,6 +9,7 @@ pub mod model;
 pub mod notify;
 pub mod reminders;
 pub mod rrule;
+pub mod ui;
 
 use std::collections::HashMap;
 use std::str::FromStr;

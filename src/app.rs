@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::calendar::notify::{DesktopNotifier, Notifier};
 use crate::calendar::reminders::{ReminderScheduler, TICK_INTERVAL};
+use crate::calendar::ui::CalendarUi;
 use crate::calendar::CalendarStore;
 use crate::db::Db;
 use crate::email::sync::{live_factories, SyncEngine};
@@ -47,6 +48,7 @@ pub struct AdjutantApp {
     module: Module,
     todo: TodoUi,
     email: EmailUi,
+    calendar: CalendarUi,
     sync: Option<SyncEngine>,
     theme: theme::ThemeWatcher,
     theme_choice: theme::ThemeChoice,
@@ -103,6 +105,7 @@ impl AdjutantApp {
             .ok()
             .flatten()
             .unwrap_or(false);
+        let calendar = CalendarUi::new(&db);
         let mut todo = TodoUi::new(&db);
         if let Some(raw) = last_group {
             if let Ok(id) = Uuid::parse_str(&raw) {
@@ -118,6 +121,7 @@ impl AdjutantApp {
             module: Module::Todo,
             todo,
             email: EmailUi::new(),
+            calendar,
             sync,
             theme: theme::ThemeWatcher::new(),
             theme_choice,
@@ -256,6 +260,7 @@ impl eframe::App for AdjutantApp {
         if self.focus_mode
             && !self.help_open
             && !self.todo.is_editing()
+            && !self.calendar.is_busy()
             && ctx.input(|i| i.key_pressed(Key::Escape))
         {
             self.toggle_focus_mode();
@@ -310,7 +315,7 @@ impl eframe::App for AdjutantApp {
                         Module::Calendar,
                         Module::Scratchpad,
                     ] {
-                        if module == Module::Todo || module == Module::Email {
+                        if module != Module::Scratchpad {
                             let active = self.module == module;
                             if crate::ui::selectable(ui, active, module.label()).clicked() {
                                 self.module = module;
@@ -403,6 +408,16 @@ impl eframe::App for AdjutantApp {
                     });
                 }
                 self.toasts = toasts;
+            }
+            Module::Calendar => {
+                let mut toasts = std::mem::take(&mut self.toasts);
+                let was_focus = self.focus_mode;
+                self.calendar
+                    .show(ui, &ctx, &self.db, &mut toasts, &mut self.focus_mode);
+                self.toasts = toasts;
+                if self.focus_mode != was_focus {
+                    let _ = self.db.set_setting(SETTINGS_FOCUS_MODE, &self.focus_mode);
+                }
             }
             other => {
                 let name = other.label();
