@@ -26,6 +26,8 @@ const CHILD_INDENT_PX: f32 = 24.0;
 const MAX_VISUAL_DEPTH: usize = 8;
 /// Gap between cards.
 const CARD_GAP_PX: f32 = 10.0;
+/// Max width of the centered list column (HEY pass §8).
+const LIST_COLUMN_MAX_WIDTH: f32 = 860.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -182,10 +184,15 @@ impl TodoUi {
         let mut activate: Option<(Uuid, View)> = None;
         for group in self.groups.clone() {
             let selected = self.view == View::Tree && self.current_group == Some(group.id);
-            let response = ui.selectable_label(selected, group.name.clone());
+            let row = ui.horizontal(|ui| {
+                icons::group_dot(ui, icons::group_dot_color(group.id), 10.0);
+                let response = ui.selectable_label(selected, group.name.clone());
+                (response.clicked(), response.double_clicked(), response.rect)
+            });
+            let (clicked, double_clicked, rect) = row.inner;
             if selected {
                 // Same selection language as todo rows: fill + 3px accent bar.
-                let strip = response.rect.expand2(egui::vec2(10.0, 3.0));
+                let strip = rect.expand2(egui::vec2(12.0, 3.0));
                 ui.painter().rect_filled(
                     strip,
                     egui::CornerRadius::same(3),
@@ -197,11 +204,11 @@ impl TodoUi {
                     accent_of(ui),
                 );
             }
-            if response.clicked() {
+            if clicked {
                 activate = Some((group.id, View::Tree));
             }
             // Rename via double click.
-            if response.double_clicked() {
+            if double_clicked {
                 self.editor = Some(Editor {
                     target: EditorTarget::GroupRename(group.id),
                     buffer: group.name.clone(),
@@ -560,6 +567,36 @@ impl TodoUi {
     // ── tree view (center) ────────────────────────────────────────────────
 
     fn tree_view(&mut self, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>, focus_mode: &mut bool) {
+        // Centered column (HEY's focused column feel): max ~860px when the
+        // window is wide, full width in focus mode.
+        let avail = ui.available_width();
+        let width = if *focus_mode {
+            avail
+        } else {
+            avail.min(LIST_COLUMN_MAX_WIDTH)
+        };
+        let indent = (avail - width).max(0.0) / 2.0;
+        // A single max_rect scope (NOT a horizontal strip — nested strip
+        // layouts break egui 0.36's hit testing for content inside them).
+        let min = ui.cursor().min + egui::vec2(indent, 0.0);
+        let max_rect = egui::Rect::from_min_size(min, egui::vec2(width, ui.available_height()));
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(max_rect)
+                .id_salt("list_column"),
+            |ui| {
+                self.tree_view_content(ui, db, toasts, focus_mode);
+            },
+        );
+    }
+
+    fn tree_view_content(
+        &mut self,
+        ui: &mut Ui,
+        db: &Db,
+        toasts: &mut Vec<String>,
+        focus_mode: &mut bool,
+    ) {
         let Some(group) = self.current_group else {
             ui::empty_state(
                 ui,
@@ -569,17 +606,22 @@ impl TodoUi {
             return;
         };
 
-        // List header: group name with the actions immediately beside it
-        // (ghost buttons — not right-aligned across the pane).
-        ui.add_space(8.0);
+        // List header: color dot + group name (26px heavy) with the actions
+        // immediately beside it (ghost buttons — not right-aligned).
+        ui.add_space(24.0);
         ui.horizontal(|ui| {
-            let name = self
+            let (name, dot) = self
                 .groups
                 .iter()
                 .find(|g| g.id == group)
-                .map(|g| g.name.clone())
+                .map(|g| (g.name.clone(), icons::group_dot_color(g.id)))
                 .unwrap_or_default();
-            ui.label(RichText::new(name).size(fonts::SIZE_HEADING).strong());
+            icons::group_dot(ui, dot, 10.0);
+            ui.label(
+                RichText::new(name)
+                    .font(fonts::heading_font(ui.ctx()))
+                    .color(theme::palette(ui).text),
+            );
             if ui::ghost_button(ui, "+ New todo")
                 .on_hover_text("New top-level todo (Ctrl+N nests under the selection)")
                 .clicked()
@@ -770,7 +812,7 @@ impl TodoUi {
                     child_clicked = true;
                 } else {
                     let terminal = todo.status.is_terminal();
-                    let mut text = RichText::new(&todo.title);
+                    let mut text = RichText::new(&todo.title).font(fonts::title_font(ui.ctx()));
                     if terminal {
                         text = text.color(ui.visuals().weak_text_color()).strikethrough();
                     }

@@ -90,7 +90,8 @@ fn type_in_last_input(h: &mut Harness<'static, TodoHarnessState>, text: &str) {
 }
 
 /// Click a card's body (the wide card widget node) rather than its title
-/// label, unfolding it.
+/// label, unfolding it. Two settle frames: the click frame plus one for
+/// the expanded content to reach the AccessKit tree.
 fn click_card(h: &mut Harness<'static, TodoHarnessState>, title: &str) {
     {
         let mut nodes: Vec<_> = h.query_all_by_label(title).collect();
@@ -98,6 +99,7 @@ fn click_card(h: &mut Harness<'static, TodoHarnessState>, title: &str) {
         nodes.sort_by(|a, b| a.rect().width().partial_cmp(&b.rect().width()).unwrap());
         nodes.last().unwrap().click();
     }
+    h.run();
     h.run();
 }
 

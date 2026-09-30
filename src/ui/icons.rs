@@ -171,3 +171,31 @@ fn text_width(ui: &Ui, text: &str) -> f32 {
 fn tint(c: Color32, a: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a.clamp(0.0, 1.0) * 255.0) as u8)
 }
+
+/// Group identity colors (HEY avatar echo, spec §8): a fixed 6-color cycle,
+/// stable per group — hash of the group id picks the slot. Deliberate
+/// constants, not palette fields: dots stay colorful in every theme.
+pub const GROUP_DOT_COLORS: [Color32; 6] = [
+    Color32::from_rgb(0x5B, 0x4B, 0xC4), // violet
+    Color32::from_rgb(0xF2, 0xC9, 0x4C), // gold
+    Color32::from_rgb(0x56, 0xC9, 0xA8), // mint
+    Color32::from_rgb(0xF2, 0x8C, 0x6B), // salmon
+    Color32::from_rgb(0x56, 0xA8, 0xDC), // sky
+    Color32::from_rgb(0xE5, 0x7B, 0xA0), // rose
+];
+
+/// The dot color for a group: stable hash of its id into the cycle.
+pub fn group_dot_color(group_id: uuid::Uuid) -> Color32 {
+    let slot: u64 = group_id.as_bytes().iter().map(|b| u64::from(*b)).sum();
+    GROUP_DOT_COLORS[(slot % GROUP_DOT_COLORS.len() as u64) as usize]
+}
+
+/// A plain colored dot (group identity in the sidebar / before headings).
+pub fn group_dot(ui: &mut Ui, color: Color32, diameter: f32) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(diameter + 4.0, diameter + 4.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .circle_filled(rect.center(), diameter / 2.0, color);
+    }
+}
