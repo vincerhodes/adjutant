@@ -57,10 +57,49 @@ pub trait ImapTransport {
     /// (decided once from server capabilities).
     fn move_mail(&mut self, uid: u32, target: &str) -> Result<(), EmailError>;
     /// APPEND an RFC822 message to a folder (used for Sent copies).
-    fn append(&mut self, folder: &str, content: &[u8], flags: &[String])
-    -> Result<(), EmailError>;
+    fn append(&mut self, folder: &str, content: &[u8], flags: &[String]) -> Result<(), EmailError>;
     fn noop(&mut self) -> Result<(), EmailError>;
     fn logout(&mut self) -> Result<(), EmailError>;
+}
+
+/// Detect a folder's role from special-use attributes (RFC 6154) with
+/// name fallbacks ("Sent Items", "Spam", …). Pure function — unit-tested.
+pub fn detect_folder_role(name: &str, attributes: &[String]) -> crate::email::model::FolderRole {
+    use crate::email::model::FolderRole as R;
+    let has = |needle: &str| {
+        attributes
+            .iter()
+            .any(|a| a.to_lowercase().contains(&needle.to_lowercase()))
+    };
+    if has("inbox") || name.eq_ignore_ascii_case("inbox") {
+        R::Inbox
+    } else if has("sent")
+        || name.eq_ignore_ascii_case("sent")
+        || name.eq_ignore_ascii_case("sent items")
+    {
+        R::Sent
+    } else if has("drafts")
+        || name.eq_ignore_ascii_case("drafts")
+        || name.eq_ignore_ascii_case("draft")
+    {
+        R::Drafts
+    } else if has("trash")
+        || name.eq_ignore_ascii_case("trash")
+        || name.eq_ignore_ascii_case("deleted")
+        || name.eq_ignore_ascii_case("deleted messages")
+    {
+        R::Trash
+    } else if has("archive")
+        || name.eq_ignore_ascii_case("archive")
+        || name.eq_ignore_ascii_case("archives")
+    {
+        R::Archive
+    } else if has("junk") || name.eq_ignore_ascii_case("junk") || name.eq_ignore_ascii_case("spam")
+    {
+        R::Junk
+    } else {
+        R::Other
+    }
 }
 
 /// Live IMAP session over TLS (rustls).
@@ -176,20 +215,12 @@ impl ImapTransport for LiveImap {
             }
         }
         Self::imap(self.session.uid_copy(&set, target))?;
-        let _ = Self::imap(
-            self.session
-                .uid_store(&set, "+FLAGS.SILENT (\\Deleted)"),
-        );
+        let _ = Self::imap(self.session.uid_store(&set, "+FLAGS.SILENT (\\Deleted)"));
         Self::imap(self.session.expunge())?;
         Ok(())
     }
 
-    fn append(
-        &mut self,
-        folder: &str,
-        content: &[u8],
-        flags: &[String],
-    ) -> Result<(), EmailError> {
+    fn append(&mut self, folder: &str, content: &[u8], flags: &[String]) -> Result<(), EmailError> {
         let mut cmd = self.session.append(folder, content);
         use imap::types::Flag;
         for f in flags {
@@ -280,7 +311,13 @@ fn parse_fetch(fetch: &imap::types::Fetch, want_body: bool) -> Option<RemoteMail
         .get_first_header("From")
         .map(|h| h.get_value())
         .map(|v| parse_address_list(&v))
-        .and_then(|mut a| if a.is_empty() { None } else { Some(a.remove(0)) })
+        .and_then(|mut a| {
+            if a.is_empty() {
+                None
+            } else {
+                Some(a.remove(0))
+            }
+        })
         .unwrap_or((None, String::new()));
 
     let to = headers
@@ -315,7 +352,11 @@ fn parse_fetch(fetch: &imap::types::Fetch, want_body: bool) -> Option<RemoteMail
         cc,
         subject: decode_lossy("Subject"),
         date,
-        rfc822: if want_body { Some(bytes.to_vec()) } else { None },
+        rfc822: if want_body {
+            Some(bytes.to_vec())
+        } else {
+            None
+        },
     })
 }
 

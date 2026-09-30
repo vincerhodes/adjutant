@@ -8,8 +8,13 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::DbError;
 
-const MIGRATIONS: &[(&str, &str)] =
-    &[("0001_init", include_str!("../../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../../migrations/0001_init.sql")),
+    (
+        "0002_email",
+        include_str!("../../migrations/0002_email.sql"),
+    ),
+];
 
 pub fn run(conn: &Connection) -> Result<(), DbError> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
