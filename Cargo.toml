@@ -19,6 +19,8 @@ libc = "0.2"          # unix flock for single-instance lock
 imap = { version = "=3.0.0-alpha.15", default-features = false, features = ["rustls-tls"] } # pinned; fallback 2.4.1 noted in spec §1
 mailparse = "0.17"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "rustls-tls", "builder"] }
+chrono-tz = "0.10"
+notify-rust = "4"
 
 [lints.clippy]
 unwrap_used = "warn"
