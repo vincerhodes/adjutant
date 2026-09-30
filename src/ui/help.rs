@@ -8,11 +8,15 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+N", "New todo (child of current selection, if any)"),
     ("Ctrl+Shift+N", "New group"),
     ("Enter", "Edit title / commit edit"),
-    ("Esc", "Cancel edit / clear filter / close overlay"),
+    (
+        "Esc",
+        "Cancel edit / clear filter / exit focus mode / close overlay",
+    ),
     ("Space", "Toggle done (refused while descendants are open)"),
-    ("Ctrl+F", "Filter tree"),
+    ("Ctrl+F", "Filter list"),
     ("Alt+↑ / Alt+↓", "Move todo among siblings"),
-    ("↑ / ↓", "Navigate tree"),
+    ("↑ / ↓", "Navigate cards"),
+    ("Ctrl+.", "Focus mode — full-window list"),
     ("Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset"),
     ("F1", "This overlay"),
 ];
@@ -44,7 +48,14 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
             ui.add_space(8.0);
             ui.label(
                 egui::RichText::new(
-                    "The \"+ New todo\" button in the tree header always creates a top-level todo.",
+                    "Click a card to unfold it — notes, status, due date and actions live inside the card.",
+                )
+                .small()
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "The \"+ New todo\" button creates a top-level todo. The theme picker is the \"Theme:\" button at the sidebar bottom.",
                 )
                 .small()
                 .color(ui.visuals().weak_text_color()),

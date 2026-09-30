@@ -175,6 +175,22 @@ impl<'a> LinkStore<'a> {
         )?)
     }
 
+    /// Ids of todos targeted by at least one live `blocks` link — drives the
+    /// `Blocked` badge on todo cards.
+    pub fn blocked_todo_ids(&self) -> Result<std::collections::HashSet<Uuid>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT target_id FROM entity_links WHERE relation = 'blocks' AND target_type = 'todo'",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut ids = std::collections::HashSet::new();
+        for row in rows {
+            if let Ok(uuid) = Uuid::parse_str(&row?) {
+                ids.insert(uuid);
+            }
+        }
+        Ok(ids)
+    }
+
     /// Would adding `src -blocks-> tgt` create a cycle? True iff `src` is
     /// reachable from `tgt` over outgoing `blocks` edges (i.e. tgt blocks*
     /// src already).

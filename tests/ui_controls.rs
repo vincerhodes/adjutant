@@ -89,6 +89,18 @@ fn type_in_last_input(h: &mut Harness<'static, TodoHarnessState>, text: &str) {
     h.run();
 }
 
+/// Click a card's body (the wide card widget node) rather than its title
+/// label, unfolding it.
+fn click_card(h: &mut Harness<'static, TodoHarnessState>, title: &str) {
+    {
+        let mut nodes: Vec<_> = h.query_all_by_label(title).collect();
+        assert!(!nodes.is_empty(), "no node named {title:?}");
+        nodes.sort_by(|a, b| a.rect().width().partial_cmp(&b.rect().width()).unwrap());
+        nodes.last().unwrap().click();
+    }
+    h.run();
+}
+
 fn group_tree_titles(h: &Harness<'_, TodoHarnessState>) -> Vec<String> {
     let app = h.state();
     let store = TodoStore::new(&app.db);
@@ -164,8 +176,8 @@ fn ctrl_n_does_not_fire_over_trash_view() {
     h.run();
     h.get_by_label_contains("Trash").click();
     h.run();
-    // Detail pane stays mounted: due date + blocked-by search.
-    assert_eq!(text_input_count(&h), 2);
+    // Folded trash cards have no text inputs.
+    assert_eq!(text_input_count(&h), 0);
 
     // Ctrl+N over the trash list must not open a tree editor: back in the
     // tree there is still no editor widget.
@@ -175,7 +187,7 @@ fn ctrl_n_does_not_fire_over_trash_view() {
     h.run();
     assert_eq!(
         text_input_count(&h),
-        2,
+        0,
         "Ctrl+N over the trash view must not strand a tree editor"
     );
 
@@ -184,7 +196,7 @@ fn ctrl_n_does_not_fire_over_trash_view() {
     h.run();
     h.key_press_modifiers(Modifiers::CTRL, Key::F);
     h.run();
-    assert_eq!(text_input_count(&h), 3);
+    assert_eq!(text_input_count(&h), 1);
 }
 
 // ── Item 2: mouse parity ──────────────────────────────────────────────────
@@ -278,7 +290,7 @@ fn mouse_new_group_button_creates_group() {
 }
 
 #[test]
-fn mouse_add_sub_todo_from_detail_pane() {
+fn mouse_add_sub_todo_via_unfolded_card() {
     let mut h = make_harness();
     h.run();
     h.get_by_label("+ New todo").click();
@@ -293,27 +305,28 @@ fn mouse_add_sub_todo_from_detail_pane() {
     h.key_press(Key::Escape);
     h.run();
 
+    // Folded card: the actions row is hidden.
+    assert_eq!(
+        h.query_all_by_label_contains("Add sub-todo").count(),
+        0,
+        "folded card hides the actions row"
+    );
+    // Click the card body to unfold.
+    click_card(&mut h, "Parent");
+    assert_eq!(
+        h.query_all_by_label_contains("Add sub-todo").count(),
+        1,
+        "unfolded card shows the actions row"
+    );
+
     h.get_by_label("Add sub-todo").click();
     h.run();
-    // Three single-line inputs now: due date + blocked-by search (detail
-    // pane) + new-sub-todo editor. The editor renders after the detail pane,
-    // so it's the last in the accesskit tree.
-    {
-        let inputs: Vec<_> = h.query_all_by_role(Role::TextInput).collect();
-        assert_eq!(
-            inputs.len(),
-            3,
-            "due date + blocked-by search + new-sub-todo editor"
-        );
-        inputs.last().unwrap().focus();
-    }
-    h.run();
-    {
-        let inputs: Vec<_> = h.get_all_by_role(Role::TextInput).collect();
-        inputs.last().unwrap().type_text("Child");
-    }
-    h.run();
+    // The expanded card has a due field; the new-sub-todo editor renders
+    // after it, so it's the last single-line input.
+    type_in_last_input(&mut h, "Child");
     h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
     h.run();
 
     let app = h.state();
@@ -330,7 +343,7 @@ fn mouse_add_sub_todo_from_detail_pane() {
 fn mouse_move_up_reorders_siblings() {
     let mut h = make_harness_with_todos();
     h.run();
-    // Select B via arrow keys (avoids label ambiguity with the detail title).
+    // Select B via arrow keys.
     h.key_press(Key::ArrowDown);
     h.run();
     h.key_press(Key::ArrowDown);
@@ -340,6 +353,8 @@ fn mouse_move_up_reorders_siblings() {
         vec!["A".to_string(), "B".to_string()]
     );
 
+    // Move buttons live in the unfolded card's actions row.
+    click_card(&mut h, "B");
     h.get_by_label("Move up").click();
     h.run();
     assert_eq!(
@@ -448,4 +463,69 @@ fn theme_picker_switches_palette_and_persists() {
     );
     let stored: String = h.state().db().get_setting("ui.theme").unwrap().unwrap();
     assert_eq!(stored, "dark");
+}
+
+#[test]
+fn badge_presence_rules() {
+    use adjutant::core::entity::{EntityRef, EntityType};
+    use adjutant::core::link::{LinkStore, Relation};
+    use adjutant::todo::Priority;
+
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let store = TodoStore::new(&db);
+    let group = store.create_group("Personal").unwrap();
+    let parent = store.create(group.id, None, "Parent").unwrap();
+    store.create(group.id, Some(parent.id), "C1").unwrap();
+    store.create(group.id, Some(parent.id), "C2").unwrap();
+    let high = store.create(group.id, None, "High task").unwrap();
+    store
+        .update(high.id, None, None, Some(Priority::HIGH), None)
+        .unwrap();
+    store.create(group.id, None, "Normal task").unwrap();
+    let urgent = store.create(group.id, None, "Urgent task").unwrap();
+    store
+        .update(urgent.id, None, None, Some(Priority::URGENT), None)
+        .unwrap();
+    let blocker = store.create(group.id, None, "Blocker A").unwrap();
+    let blocked = store.create(group.id, None, "Blocked B").unwrap();
+    LinkStore::new(&db)
+        .link(
+            &EntityRef::new(EntityType::Todo, blocker.id),
+            &EntityRef::new(EntityType::Todo, blocked.id),
+            &Relation::blocks(),
+        )
+        .unwrap();
+    let todo = TodoUi::new(&db);
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_ui_state(
+            |ui, app: &mut TodoHarnessState| {
+                app.todo.sidebar(ui, &app.db);
+                let ctx = ui.ctx().clone();
+                app.todo
+                    .show(ui, &ctx, &app.db, &mut app.toasts, &mut app.focus_requested);
+            },
+            TodoHarnessState {
+                db,
+                todo,
+                toasts: Vec::new(),
+                focus_requested: false,
+            },
+        );
+    h.run();
+
+    // Sub-count pill on the parent (two open children).
+    assert_eq!(h.query_all_by_label_contains("2 sub").count(), 1);
+    // Priority pills only for High/Urgent.
+    assert_eq!(h.query_all_by_label("High").count(), 1);
+    assert_eq!(h.query_all_by_label("Urgent").count(), 1);
+    assert_eq!(
+        h.query_all_by_label("Normal").count(),
+        0,
+        "Normal priority gets no pill on a folded card"
+    );
+    // Blocked pill on the target of a live blocks link.
+    assert_eq!(h.query_all_by_label("Blocked").count(), 1);
+    // Status pill on every card.
+    assert_eq!(h.query_all_by_label("Open").count(), 6);
 }

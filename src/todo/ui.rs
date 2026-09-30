@@ -1,13 +1,16 @@
-//! Todo module UI: three-pane layout (group list → tree → detail),
-//! trash view, filter, inline editing, delete-confirm modal.
+//! Todo module UI: card-based list (M1.5 redesign).
+//!
+//! The old right-hand detail pane is gone — every todo is a full-width card;
+//! clicking the card body unfolds notes, status/priority rows, due field and
+//! actions in place. Children render as nested cards.
 //!
 //! Zero SQL in this file — all data access goes through `TodoStore` /
-//! `LinkStore`. Rendering only.
+//! `LinkStore`. Rendering only; every color comes from the theme palette.
 
 use std::collections::HashSet;
 
 use chrono::{Local, NaiveDate};
-use egui::{Align, Color32, Context, Key, Layout, RichText, Sense, Ui};
+use egui::{Align, Color32, Context, Key, Layout, RichText, Sense, Stroke, Ui};
 use uuid::Uuid;
 
 use crate::core::entity::{EntityRef, EntityType};
@@ -16,9 +19,12 @@ use crate::db::Db;
 use crate::todo::{Priority, Status, Todo, TodoError, TodoGroup, TodoNode, TodoStore};
 use crate::ui::{self, accent_of, fonts, theme};
 
-const INDENT_PX: f32 = 20.0;
-/// Visual indent caps at this depth (plan risk 5); structure stays unbounded.
+/// Nested-card indent per level.
+const CHILD_INDENT_PX: f32 = 24.0;
+/// Visual indent caps at this depth; structure stays unbounded.
 const MAX_VISUAL_DEPTH: usize = 8;
+/// Gap between cards.
+const CARD_GAP_PX: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -27,7 +33,7 @@ pub enum View {
 }
 
 /// In-flight editor state. Keyed independently of the tree so background
-/// reloads never clobber an edit (§6 edit semantics).
+/// reloads never clobber an edit.
 #[derive(Debug, Clone)]
 struct Editor {
     target: EditorTarget,
@@ -68,7 +74,14 @@ pub struct TodoUi {
     trash: Vec<Todo>,
     trash_count: usize,
     selected: Option<Uuid>,
-    collapsed: HashSet<Uuid>,
+    /// Cards expanded in place (default folded).
+    unfolded: HashSet<Uuid>,
+    /// Cards the pointer hovered last frame (drives card_hover fill).
+    hovered_cards: HashSet<Uuid>,
+    /// Todos targeted by a live `blocks` link (loaded once per frame).
+    blocked: HashSet<Uuid>,
+    /// Card whose "Blocked by…" picker is open.
+    picker_for: Option<Uuid>,
     /// Flattened list of visible todo ids in display order (arrow-key nav).
     visible_order: Vec<Uuid>,
     filter: String,
@@ -93,7 +106,10 @@ impl TodoUi {
             trash: Vec::new(),
             trash_count: 0,
             selected: None,
-            collapsed: HashSet::new(),
+            unfolded: HashSet::new(),
+            hovered_cards: HashSet::new(),
+            blocked: HashSet::new(),
+            picker_for: None,
             visible_order: Vec::new(),
             filter: String::new(),
             filter_active: false,
@@ -126,6 +142,13 @@ impl TodoUi {
 
     pub fn trash_count(&self) -> usize {
         self.trash_count
+    }
+
+    /// True when an editor, the filter, or the delete-confirm modal is
+    /// active — chrome-level Esc handling (e.g. exiting focus mode) must
+    /// yield to these.
+    pub fn is_editing(&self) -> bool {
+        self.editor.is_some() || self.filter_active || self.confirm.is_some()
     }
 
     /// Sidebar content: group list + Trash entry. Rendered inside the app's
@@ -304,9 +327,32 @@ impl TodoUi {
         walk(&self.tree, id)
     }
 
-    /// Full todo UI: keyboard shortcuts, panes, modal. Takes the root `ui`
-    /// plus the ctx for shortcut input and the modal window. `focus_mode` is
-    /// set when the header's Focus button is clicked.
+    /// Ensure every ancestor of `id` is unfolded so the card is reachable.
+    fn unfold_ancestors_of(&mut self, id: Uuid) {
+        fn find_path(nodes: &[TodoNode], id: Uuid, path: &mut Vec<Uuid>) -> bool {
+            for n in nodes {
+                if n.todo.id == id {
+                    return true;
+                }
+                path.push(n.todo.id);
+                if find_path(&n.children, id, path) {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+        let mut path = Vec::new();
+        if find_path(&self.tree, id, &mut path) {
+            for ancestor in path {
+                self.unfolded.insert(ancestor);
+            }
+        }
+    }
+
+    /// Full todo UI: keyboard shortcuts, card list, modal. Takes the root
+    /// `ui` plus the ctx for shortcut input and the modal window.
+    /// `focus_mode` is set when the header's Focus button is clicked.
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -317,17 +363,7 @@ impl TodoUi {
     ) {
         self.handle_keys(ctx, db, toasts);
         self.reload(db, None);
-
-        // Detail pane: removed in the cards redesign (M1.5) — kept until
-        // then.
-        egui::Panel::right("todo_detail")
-            .resizable(true)
-            .default_size(300.0)
-            .size_range(240.0..=420.0)
-            .show_separator_line(false)
-            .show(ui, |ui| {
-                self.detail_pane(ui, db, toasts);
-            });
+        self.blocked = LinkStore::new(db).blocked_todo_ids().unwrap_or_default();
 
         egui::CentralPanel::default().show(ui, |ui| match self.view {
             View::Tree => self.tree_view(ui, db, toasts, focus_mode),
@@ -335,13 +371,6 @@ impl TodoUi {
         });
 
         self.show_confirm_modal(ctx, db, toasts);
-    }
-
-    /// True when an editor, the filter, or the delete-confirm modal is
-    /// active — chrome-level Esc handling (e.g. exiting focus mode) must
-    /// yield to these.
-    pub fn is_editing(&self) -> bool {
-        self.editor.is_some() || self.filter_active || self.confirm.is_some()
     }
 
     // ── keyboard ──────────────────────────────────────────────────────────
@@ -377,7 +406,7 @@ impl TodoUi {
             if i.key_pressed(Key::Space) {
                 if let Some(id) = self.selected {
                     if let Err(e) = self.toggle_done(db, id) {
-                        toasts.push(e.to_string());
+                        toasts.push(e);
                     }
                 }
             }
@@ -406,6 +435,7 @@ impl TodoUi {
             if i.key_pressed(Key::Enter) {
                 if let Some(id) = self.selected {
                     if let Ok(todo) = TodoStore::new(db).get(id) {
+                        self.unfold_ancestors_of(id);
                         self.editor = Some(Editor {
                             target: EditorTarget::Title(id),
                             buffer: todo.title,
@@ -431,6 +461,9 @@ impl TodoUi {
                 target: EditorTarget::NewTodo { group, parent },
                 buffer: String::new(),
             });
+            if let Some(p) = parent {
+                self.unfold_ancestors_of(p);
+            }
         } else {
             toasts.push("Create a group first (Ctrl+Shift+N)".to_string());
         }
@@ -484,8 +517,8 @@ impl TodoUi {
             return;
         };
 
-        // Tree header: group name with the actions immediately beside it
-        // (ghost buttons, §7a — not right-aligned across the pane).
+        // List header: group name with the actions immediately beside it
+        // (ghost buttons — not right-aligned across the pane).
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let name = self
@@ -562,7 +595,7 @@ impl TodoUi {
             // The new-todo editor must render even with an empty tree — its
             // Esc/Enter handling lives in the widget, and an unrendered
             // editor wedges every key.
-            self.new_todo_row(ui, db, toasts);
+            self.new_todo_row(ui, db, toasts, None);
             if self.editor.is_none() {
                 ui::empty_state(ui, "Nothing here yet", "Ctrl+N to create your first todo");
             }
@@ -571,17 +604,10 @@ impl TodoUi {
 
         self.visible_order.clear();
         let nodes = self.tree.clone();
-        // Suspend filtering while a title is being edited: the edited row
-        // would otherwise vanish from the tree the moment its buffer stops
+        // Suspend filtering while an editor is active: the edited card
+        // would otherwise vanish from the list the moment its buffer stops
         // matching, stranding the editor.
-        let title_editing = matches!(
-            self.editor,
-            Some(Editor {
-                target: EditorTarget::Title(_),
-                ..
-            })
-        );
-        let filter = if title_editing {
+        let filter = if self.editor.is_some() {
             String::new()
         } else {
             self.filter.clone()
@@ -589,14 +615,515 @@ impl TodoUi {
         let scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
         scroll.show(ui, |ui| {
             for node in &nodes {
-                self.node_row(ui, node, 0, &filter, db, toasts);
+                self.card(ui, node, 0, &filter, db, toasts);
             }
-            // Inline "new todo" row right after its would-be siblings.
-            self.new_todo_row(ui, db, toasts);
+            // Top-level "new todo" editor at the end of the list.
+            self.new_todo_row(ui, db, toasts, None);
         });
     }
 
-    fn new_todo_row(&mut self, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>) {
+    // ── cards ─────────────────────────────────────────────────────────────
+
+    fn card_frame(&self, ui: &Ui, hovered: bool) -> egui::Frame {
+        let p = theme::palette(ui);
+        egui::Frame::new()
+            .fill(if hovered { p.card_hover } else { p.card_fill })
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::symmetric(12, 6))
+            .stroke(if theme::card_needs_border(&p) {
+                Stroke::new(1.0, p.border)
+            } else {
+                Stroke::NONE
+            })
+    }
+
+    fn card(
+        &mut self,
+        ui: &mut Ui,
+        node: &TodoNode,
+        depth: usize,
+        filter: &str,
+        db: &Db,
+        toasts: &mut Vec<String>,
+    ) {
+        let p = theme::palette(ui);
+        let todo = &node.todo;
+        let id = todo.id;
+
+        // Filtering: keep matches and ancestors of matches.
+        let child_match = !filter.is_empty() && contains_match(node, filter);
+        if !filter.is_empty()
+            && !todo.title.to_lowercase().contains(&filter.to_lowercase())
+            && !child_match
+        {
+            return;
+        }
+
+        self.visible_order.push(id);
+        let selected = self.selected == Some(id);
+        let unfolded = self.unfolded.contains(&id);
+        let hovered = self.hovered_cards.contains(&id);
+
+        ui.add_space(CARD_GAP_PX);
+        // Register the card's click target BEFORE painting content, using
+        // last frame's rect: egui routes clicks to the topmost widget, so
+        // inner widgets (checkbox, title, buttons) must register after the
+        // card and win. The card only sees clicks on non-interactive areas.
+        let card_id = ui.id().with(("todo_card", id));
+        let prev_rect = ui.ctx().data_mut(|d| d.get_temp::<egui::Rect>(card_id));
+        let card_response = prev_rect.map(|rect| ui.interact(rect, card_id, egui::Sense::click()));
+
+        let frame = self.card_frame(ui, hovered);
+        let frame_response = frame.show(ui, |ui| {
+            if !unfolded {
+                ui.set_min_height(46.0 - 12.0);
+            }
+            let mut child_clicked = false;
+            let mut badge_rects: Vec<egui::Rect> = Vec::new();
+            ui.horizontal(|ui| {
+                // Checkbox (custom-painted: visible outline, accent when checked).
+                let checked = todo.status == Status::Done;
+                if ui::todo_checkbox(ui, checked).clicked() {
+                    match self.toggle_done(db, id) {
+                        Ok(()) => {}
+                        Err(e) => toasts.push(e),
+                    }
+                    child_clicked = true;
+                }
+
+                // Fold/unfold arrow for parents.
+                if !node.children.is_empty() {
+                    if ui::collapse_arrow(ui, !unfolded).clicked() {
+                        if unfolded {
+                            self.unfolded.remove(&id);
+                        } else {
+                            self.unfolded.insert(id);
+                        }
+                        child_clicked = true;
+                    }
+                } else {
+                    ui.add_space(14.0);
+                }
+
+                // Title / inline editor. Title click selects (single); the
+                // card body click (elsewhere) unfolds. Double-click edits.
+                let editing_title = matches!(
+                    self.editor,
+                    Some(Editor { target: EditorTarget::Title(t), .. }) if t == id
+                );
+                if editing_title {
+                    self.title_editor(ui, id, db, toasts);
+                    child_clicked = true;
+                } else {
+                    let terminal = todo.status.is_terminal();
+                    let mut text = RichText::new(&todo.title);
+                    if terminal {
+                        text = text.color(ui.visuals().weak_text_color()).strikethrough();
+                    }
+                    let response = ui.add(egui::Label::new(text).sense(Sense::click()));
+                    if response.clicked() {
+                        self.selected = Some(id);
+                        child_clicked = true;
+                    }
+                    if response.double_clicked() {
+                        self.editor = Some(Editor {
+                            target: EditorTarget::Title(id),
+                            buffer: todo.title.clone(),
+                        });
+                        child_clicked = true;
+                    }
+                }
+
+                // Badges, right-aligned (spring via right-to-left layout).
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // Blocked: danger outline pill.
+                    if self.blocked.contains(&id) {
+                        badge_rects.push(pill(
+                            ui,
+                            "Blocked".to_string(),
+                            p.danger,
+                            Color32::TRANSPARENT,
+                            Some(p.danger),
+                        ));
+                    }
+                    // Sub-count: open descendants, when there are children.
+                    if !node.children.is_empty() {
+                        let open = open_descendants_excluding_self(node);
+                        badge_rects.push(pill(
+                            ui,
+                            format!("{open} sub"),
+                            p.muted,
+                            with_alpha(p.muted, 0.12),
+                            None,
+                        ));
+                    }
+                    // Due: hidden for terminal todos; danger when overdue,
+                    // accent when due today, muted otherwise.
+                    if let Some(due) = todo.due_date {
+                        if !todo.status.is_terminal() {
+                            let today = Local::now().date_naive();
+                            let (fill, text_color) = if due < today {
+                                (p.danger, theme::contrast_on(&p, p.danger))
+                            } else if due == today {
+                                (p.accent, theme::contrast_on(&p, p.accent))
+                            } else {
+                                (with_alpha(p.muted, 0.12), p.muted)
+                            };
+                            badge_rects.push(pill(
+                                ui,
+                                due.format("%b %-d").to_string(),
+                                text_color,
+                                fill,
+                                None,
+                            ));
+                        }
+                    }
+                    // Priority: only High/Urgent get a pill.
+                    if todo.priority.value() >= 2 {
+                        let fill = if todo.priority.value() == 3 {
+                            p.danger
+                        } else {
+                            p.warn
+                        };
+                        badge_rects.push(pill(
+                            ui,
+                            todo.priority.label().to_string(),
+                            theme::contrast_on(&p, fill),
+                            fill,
+                            None,
+                        ));
+                    }
+                    // Status pill.
+                    let (text, text_color, fill, outline) = status_pill_style(&p, todo.status);
+                    badge_rects.push(pill(ui, text.to_string(), text_color, fill, outline));
+                });
+            });
+
+            if unfolded {
+                ui.add_space(8.0);
+                self.expanded_card(ui, node, db, toasts, &mut child_clicked);
+            }
+            (child_clicked, badge_rects)
+        });
+        let (child_clicked, badge_rects) = frame_response.inner;
+
+        // Card-body click (not checkbox/badges/title or any inner widget)
+        // toggles unfold. Hover is pointer-position based (no z-order).
+        let rect = frame_response.response.rect;
+        ui.ctx().data_mut(|d| d.insert_temp(card_id, rect));
+        if let Some(card_response) = card_response {
+            card_response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, todo.title.clone())
+            });
+            let hovered_now = ui
+                .input(|i| i.pointer.latest_pos())
+                .is_some_and(|pos| rect.contains(pos));
+            if hovered_now {
+                self.hovered_cards.insert(id);
+            } else {
+                self.hovered_cards.remove(&id);
+            }
+            if card_response.clicked() && !child_clicked {
+                let pointer = ui.input(|i| i.pointer.latest_pos());
+                let on_badge = badge_rects
+                    .iter()
+                    .any(|r| pointer.is_some_and(|pos| r.contains(pos)));
+                if !on_badge {
+                    if unfolded {
+                        self.unfolded.remove(&id);
+                    } else {
+                        self.unfolded.insert(id);
+                    }
+                    self.selected = Some(id);
+                }
+            }
+        }
+
+        // Selected (keyboard nav): 2px accent outline.
+        if selected {
+            ui.painter().rect_stroke(
+                rect,
+                egui::CornerRadius::same(6),
+                Stroke::new(2.0, accent_of(ui)),
+                egui::StrokeKind::Outside,
+            );
+        }
+
+        // Children as nested cards (24px indent), when unfolded — or when a
+        // filter/active editor needs them visible.
+        let editor_here = matches!(
+            self.editor,
+            Some(Editor {
+                target: EditorTarget::NewTodo { parent: Some(p), .. },
+                ..
+            }) if p == id
+        );
+        let show_children = (!node.children.is_empty() && (unfolded || child_match)) || editor_here;
+        if show_children {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                if depth < MAX_VISUAL_DEPTH {
+                    ui.add_space(CHILD_INDENT_PX);
+                }
+                ui.vertical(|ui| {
+                    for child in &node.children {
+                        self.card(ui, child, depth + 1, filter, db, toasts);
+                    }
+                    if editor_here {
+                        self.new_todo_row(ui, db, toasts, Some(id));
+                    }
+                });
+            });
+        }
+    }
+
+    /// Expanded card section: notes, status/priority rows, due field,
+    /// actions — everything the old detail pane used to hold.
+    fn expanded_card(
+        &mut self,
+        ui: &mut Ui,
+        node: &TodoNode,
+        db: &Db,
+        toasts: &mut Vec<String>,
+        inner_clicked: &mut bool,
+    ) {
+        let todo = &node.todo;
+
+        // Notes (multiline: blur or Ctrl+S saves, no save button).
+        ui.label(
+            RichText::new("Notes")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let notes = match &self.notes_buffer {
+            Some((buf_id, buf)) if *buf_id == todo.id => buf.clone(),
+            _ => todo.notes.clone(),
+        };
+        let mut notes_edit = notes.clone();
+        let response = ui.add(
+            egui::TextEdit::multiline(&mut notes_edit)
+                .frame(egui::Frame::NONE)
+                .desired_width(f32::INFINITY)
+                .desired_rows(4)
+                .hint_text("Notes… (saved on blur or Ctrl+S)"),
+        );
+        ui::focused_underline(ui, &response);
+        if response.clicked() || response.changed() {
+            // Clicking into the notes editor must not toggle the card fold.
+            *inner_clicked = true;
+        }
+        let save = response.lost_focus()
+            || (response.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S)));
+        if save {
+            if notes_edit != todo.notes {
+                if let Err(e) =
+                    TodoStore::new(db).update(todo.id, None, Some(&notes_edit), None, None)
+                {
+                    toasts.push(e.to_string());
+                } else {
+                    self.dirty = true;
+                }
+            }
+            self.notes_buffer = None;
+        } else {
+            self.notes_buffer = Some((todo.id, notes_edit));
+        }
+        ui.add_space(8.0);
+
+        // Status segmented row.
+        ui.horizontal_wrapped(|ui| {
+            for status in [
+                Status::Open,
+                Status::InProgress,
+                Status::Done,
+                Status::Cancelled,
+            ] {
+                let color = status_color(ui, status);
+                let text = RichText::new(status.label()).color(color);
+                let response = ui.selectable_label(todo.status == status, text);
+                if response.clicked() {
+                    *inner_clicked = true;
+                    match TodoStore::new(db).set_status(todo.id, status) {
+                        Ok(_) => self.dirty = true,
+                        Err(TodoError::OpenDescendants(n)) => {
+                            toasts.push(format!("Cannot complete: {n} open descendant(s) remain"));
+                        }
+                        Err(e) => toasts.push(e.to_string()),
+                    }
+                }
+            }
+        });
+        ui.add_space(6.0);
+
+        // Priority segmented row.
+        ui.horizontal_wrapped(|ui| {
+            for value in 0..=3u8 {
+                let pr = Priority::new(value).unwrap_or(Priority::NORMAL);
+                let color = priority_text_color(ui, pr);
+                let text = RichText::new(pr.label()).color(color);
+                let response = ui
+                    .selectable_label(todo.priority == pr, text)
+                    .on_hover_text(pr.label());
+                if response.clicked() {
+                    *inner_clicked = true;
+                    if let Err(e) = TodoStore::new(db).update(todo.id, None, None, Some(pr), None) {
+                        toasts.push(e.to_string());
+                    } else {
+                        self.dirty = true;
+                    }
+                }
+            }
+        });
+        ui.add_space(8.0);
+
+        // Due date (validated text, no calendar widget).
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Due").small());
+            if self.due_for != Some(todo.id) {
+                self.due_buffer = todo.due_date.map(|d| d.to_string()).unwrap_or_default();
+                self.due_for = Some(todo.id);
+            }
+            let mut buffer = self.due_buffer.clone();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut buffer)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(110.0)
+                    .hint_text("YYYY-MM-DD"),
+            );
+            ui::focused_underline(ui, &response);
+            ui::hovered_underline(ui, &response);
+            if response.clicked() || response.changed() {
+                *inner_clicked = true;
+            }
+            if response.lost_focus() || ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S)) {
+                self.commit_due(db, todo.id, &buffer, toasts);
+            }
+            if todo.due_date.is_some() && ui::ghost_button(ui, "Clear").clicked() {
+                *inner_clicked = true;
+                self.due_buffer.clear();
+                self.due_for = None;
+                if let Err(e) = TodoStore::new(db).update(todo.id, None, None, None, Some(None)) {
+                    toasts.push(e.to_string());
+                }
+                self.dirty = true;
+            }
+        });
+        ui.add_space(8.0);
+
+        // Actions row.
+        ui.label(
+            RichText::new("Actions")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+        ui.horizontal_wrapped(|ui| {
+            if ui::ghost_button(ui, "Add sub-todo")
+                .on_hover_text("New sub-todo of this item")
+                .clicked()
+            {
+                *inner_clicked = true;
+                self.editor = Some(Editor {
+                    target: EditorTarget::NewTodo {
+                        group: todo.group_id,
+                        parent: Some(todo.id),
+                    },
+                    buffer: String::new(),
+                });
+                self.unfolded.insert(todo.id);
+                self.view = View::Tree;
+            }
+            let (index, count) = self.sibling_index(todo.id).unwrap_or((0, 1));
+            let accent = accent_of(ui);
+            let move_up = egui::Button::new(RichText::new("Move up").color(accent)).frame(false);
+            if ui
+                .add_enabled(index > 0, move_up)
+                .on_hover_text("Move up among siblings (Alt+↑)")
+                .clicked()
+            {
+                *inner_clicked = true;
+                if let Err(e) = TodoStore::new(db).reorder(todo.id, true) {
+                    toasts.push(e.to_string());
+                } else {
+                    self.dirty = true;
+                }
+            }
+            let move_down =
+                egui::Button::new(RichText::new("Move down").color(accent)).frame(false);
+            if ui
+                .add_enabled(index + 1 < count, move_down)
+                .on_hover_text("Move down among siblings (Alt+↓)")
+                .clicked()
+            {
+                *inner_clicked = true;
+                if let Err(e) = TodoStore::new(db).reorder(todo.id, false) {
+                    toasts.push(e.to_string());
+                } else {
+                    self.dirty = true;
+                }
+            }
+            let picker_open = self.picker_for == Some(todo.id);
+            if ui::ghost_button(ui, "Blocked by…")
+                .on_hover_text("Pick a todo that blocks this one")
+                .clicked()
+            {
+                *inner_clicked = true;
+                self.picker_for = if picker_open { None } else { Some(todo.id) };
+                self.blocked_search.clear();
+            }
+            if ui::ghost_button(ui, "Move to trash…").clicked() {
+                *inner_clicked = true;
+                let subtree = TodoStore::new(db).live_subtree_count(todo.id).unwrap_or(1);
+                self.confirm = Some(Confirm::Trash {
+                    id: todo.id,
+                    title: todo.title.clone(),
+                    subtree,
+                });
+            }
+        });
+
+        // Blocked-by: current blockers + picker.
+        self.blocked_by_section(ui, db, todo, toasts, inner_clicked);
+    }
+
+    fn title_editor(&mut self, ui: &mut Ui, id: Uuid, db: &Db, _toasts: &mut Vec<String>) {
+        let Some(buffer) = self
+            .editor
+            .as_ref()
+            .filter(|e| matches!(e.target, EditorTarget::Title(t) if t == id))
+            .map(|e| e.buffer.clone())
+        else {
+            return;
+        };
+        let mut buffer = buffer;
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut buffer)
+                .frame(egui::Frame::NONE)
+                .desired_width(f32::INFINITY),
+        );
+        ui::focused_underline(ui, &response);
+        if ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.editor = None;
+        } else if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
+            let title = buffer.trim();
+            if !title.is_empty() {
+                if let Err(e) = TodoStore::new(db).update(id, Some(title), None, None, None) {
+                    self.inline_error = Some(e.to_string());
+                }
+            }
+            self.editor = None;
+            self.dirty = true;
+        } else if let Some(e) = &mut self.editor {
+            e.buffer = buffer;
+        }
+    }
+
+    fn new_todo_row(
+        &mut self,
+        ui: &mut Ui,
+        db: &Db,
+        toasts: &mut Vec<String>,
+        expect_parent: Option<Uuid>,
+    ) {
         let Some(Editor {
             target: EditorTarget::NewTodo { group, parent },
             buffer,
@@ -607,11 +1134,13 @@ impl TodoUi {
         else {
             return;
         };
-        let depth = parent
-            .map(|p| self.depth_of(p).min(MAX_VISUAL_DEPTH))
-            .unwrap_or(0);
+        // The editor renders either at list level (top-level) or inside its
+        // parent's children block — never both.
+        if parent != expect_parent {
+            return;
+        }
         ui.horizontal(|ui| {
-            ui.add_space(INDENT_PX * depth as f32 + 24.0);
+            ui.add_space(26.0);
             let mut buffer = buffer.clone();
             let response = ui.add(
                 egui::TextEdit::singleline(&mut buffer)
@@ -651,8 +1180,9 @@ impl TodoUi {
             Ok(todo) => {
                 self.selected = Some(todo.id);
                 if let Some(p) = parent {
-                    self.collapsed.remove(&p);
+                    self.unfolded.insert(p);
                 }
+                self.unfold_ancestors_of(todo.id);
                 self.editor = Some(Editor {
                     target: EditorTarget::Title(todo.id),
                     buffer: todo.title,
@@ -661,21 +1191,6 @@ impl TodoUi {
             Err(e) => self.inline_error = Some(e.to_string()),
         }
         self.dirty = true;
-    }
-
-    fn depth_of(&self, id: Uuid) -> usize {
-        fn find(nodes: &[TodoNode], id: Uuid, depth: usize) -> Option<usize> {
-            for n in nodes {
-                if n.todo.id == id {
-                    return Some(depth);
-                }
-                if let Some(d) = find(&n.children, id, depth + 1) {
-                    return Some(d);
-                }
-            }
-            None
-        }
-        find(&self.tree, id, 0).unwrap_or(0)
     }
 
     /// Position of `id` among its siblings: (index, sibling count). Drives
@@ -695,175 +1210,120 @@ impl TodoUi {
         find(&self.tree, id)
     }
 
-    fn node_row(
+    fn commit_due(&mut self, db: &Db, id: Uuid, buffer: &str, toasts: &mut Vec<String>) {
+        let trimmed = buffer.trim();
+        let parsed: Option<NaiveDate> = if trimmed.is_empty() {
+            None
+        } else {
+            match NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+                Ok(d) => Some(d),
+                Err(_) => {
+                    toasts.push(format!("Invalid date {trimmed:?} — use YYYY-MM-DD"));
+                    self.due_buffer.clear();
+                    return;
+                }
+            }
+        };
+        match TodoStore::new(db).update(id, None, None, None, Some(parsed)) {
+            Ok(_) => self.dirty = true,
+            Err(e) => toasts.push(e.to_string()),
+        }
+        self.due_buffer.clear();
+        self.due_for = None;
+    }
+
+    fn blocked_by_section(
         &mut self,
         ui: &mut Ui,
-        node: &TodoNode,
-        depth: usize,
-        filter: &str,
         db: &Db,
+        todo: &Todo,
         toasts: &mut Vec<String>,
+        inner_clicked: &mut bool,
     ) {
-        // Filtering: keep matches and ancestors of matches (§6).
-        let visible_depth = depth.min(MAX_VISUAL_DEPTH);
-        if !filter.is_empty() {
-            let self_match = node
-                .todo
-                .title
-                .to_lowercase()
-                .contains(&filter.to_lowercase());
-            let child_match = contains_match(node, filter);
-            if !self_match && !child_match {
-                let hidden = node.open_descendant_count();
-                if hidden > 0 && depth == 0 {
-                    // Entire root hidden — nothing to draw.
-                }
-                return;
+        let links = LinkStore::new(db);
+        let target = EntityRef::new(EntityType::Todo, todo.id);
+        let incoming = links.links_to(&target).unwrap_or_default();
+        let blocked_by: Vec<Uuid> = incoming
+            .iter()
+            .filter(|l| l.relation.is_blocks() && l.source.kind == EntityType::Todo)
+            .map(|l| l.source.id)
+            .collect();
+        if !blocked_by.is_empty() {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Blocked by")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+            let store = TodoStore::new(db);
+            for blocker in &blocked_by {
+                let label = store
+                    .get(*blocker)
+                    .map(|t| t.title)
+                    .unwrap_or_else(|_| "Unavailable".to_string());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(label).small());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui::ghost_button(ui, "Remove").clicked() {
+                            *inner_clicked = true;
+                            let source = EntityRef::new(EntityType::Todo, *blocker);
+                            if let Err(e) = links.unlink(&source, &target, &Relation::blocks()) {
+                                toasts.push(e.to_string());
+                            } else {
+                                self.dirty = true;
+                                self.blocked.clear();
+                            }
+                        }
+                    });
+                });
             }
         }
 
-        self.visible_order.push(node.todo.id);
-        let selected = self.selected == Some(node.todo.id);
-        let row_bg = if selected {
-            with_alpha(accent_of(ui), 0.18)
-        } else {
-            Color32::TRANSPARENT
-        };
-        let row = ui.horizontal(|ui| {
-            ui.add_space(INDENT_PX * visible_depth as f32);
-            // Collapse toggle for parents.
-            if !node.children.is_empty() {
-                let collapsed = self.collapsed.contains(&node.todo.id);
-                if ui::collapse_arrow(ui, collapsed).clicked() {
-                    if collapsed {
-                        self.collapsed.remove(&node.todo.id);
-                    } else {
-                        self.collapsed.insert(node.todo.id);
+        // Picker (opened from the Actions row).
+        if self.picker_for == Some(todo.id) {
+            ui.add_space(4.0);
+            let mut search = self.blocked_search.clone();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut search)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Search todos to add a blocker…"),
+            );
+            ui::focused_underline(ui, &response);
+            if response.clicked() || response.changed() {
+                *inner_clicked = true;
+            }
+            if response.changed() {
+                self.blocked_search = search.clone();
+            }
+            if !search.is_empty() {
+                let store = TodoStore::new(db);
+                let candidates = store.search(&search, Some(todo.id)).unwrap_or_default();
+                for candidate in candidates.iter().filter(|c| !blocked_by.contains(&c.id)) {
+                    let full_text = format!("{} — {}", candidate.title, candidate.status.label());
+                    let response = ui.add(
+                        egui::Label::new(RichText::new(full_text).small()).sense(Sense::click()),
+                    );
+                    if response.clicked() {
+                        *inner_clicked = true;
+                        let source = EntityRef::new(EntityType::Todo, candidate.id);
+                        match links.link(&source, &target, &Relation::blocks()) {
+                            Ok(()) => {
+                                self.blocked_search.clear();
+                                self.dirty = true;
+                                self.blocked = links.blocked_todo_ids().unwrap_or_default();
+                            }
+                            Err(crate::core::link::LinkError::Cycle) => {
+                                toasts.push(format!(
+                                    "Cannot link: {} would create a dependency cycle",
+                                    candidate.title
+                                ));
+                            }
+                            Err(e) => toasts.push(e.to_string()),
+                        }
                     }
                 }
-            } else {
-                ui.add_space(14.0);
             }
-
-            // Checkbox (custom-painted: visible outline, accent when checked).
-            let checked = node.todo.status == Status::Done;
-            if ui::todo_checkbox(ui, checked).clicked() {
-                match self.toggle_done(db, node.todo.id) {
-                    Ok(()) => {}
-                    Err(e) => toasts.push(e),
-                }
-            }
-
-            ui::priority_dot(ui, node.todo.priority);
-
-            // Title / inline editor.
-            let editing_title = matches!(
-                self.editor,
-                Some(Editor { target: EditorTarget::Title(id), .. }) if id == node.todo.id
-            );
-            if editing_title {
-                self.title_editor(ui, node.todo.id, db, toasts);
-            } else {
-                let done = node.todo.status.is_terminal();
-                let mut text = RichText::new(&node.todo.title);
-                if done {
-                    text = text.color(ui.visuals().weak_text_color()).strikethrough();
-                }
-                let response = ui.add(egui::Label::new(text).sense(Sense::click()));
-                if response.clicked() {
-                    self.selected = Some(node.todo.id);
-                }
-                if response.double_clicked() {
-                    self.editor = Some(Editor {
-                        target: EditorTarget::Title(node.todo.id),
-                        buffer: node.todo.title.clone(),
-                    });
-                }
-            }
-
-            // Right-aligned due date (§7a: never for terminal items).
-            if let Some(due) = node.todo.due_date {
-                if !node.todo.status.is_terminal() {
-                    let today = Local::now().date_naive();
-                    let color = if due < today {
-                        ui.visuals().error_fg_color
-                    } else if due == today {
-                        accent_of(ui)
-                    } else {
-                        ui.visuals().weak_text_color()
-                    };
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(due.to_string()).small().color(color));
-                    });
-                }
-            }
-        });
-        let row_rect = row.response.rect;
-        if ui.is_rect_visible(row_rect) {
-            if selected {
-                ui.painter().rect_filled(row_rect, 0.0, row_bg);
-                // 3px accent bar as a filled rect — a stroked line at the
-                // clip edge renders faint/half-clipped.
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(row_rect.min, egui::vec2(3.0, row_rect.height())),
-                    0.0,
-                    accent_of(ui),
-                );
-            } else if row.response.hovered() {
-                ui.painter()
-                    .rect_filled(row_rect, 0.0, ui.visuals().faint_bg_color);
-            }
-        }
-
-        if !self.collapsed.contains(&node.todo.id) || self.editing_inside(node) {
-            for child in &node.children {
-                self.node_row(ui, child, depth + 1, filter, db, toasts);
-            }
-        }
-    }
-
-    /// True when a title editor is open somewhere inside this subtree — the
-    /// subtree must stay expanded or the editor's widget would vanish.
-    fn editing_inside(&self, node: &TodoNode) -> bool {
-        let Some(Editor {
-            target: EditorTarget::Title(id),
-            ..
-        }) = self.editor
-        else {
-            return false;
-        };
-        node.todo.id == id || node.children.iter().any(|c| self.editing_inside(c))
-    }
-
-    fn title_editor(&mut self, ui: &mut Ui, id: Uuid, db: &Db, _toasts: &mut Vec<String>) {
-        let Some(buffer) = self
-            .editor
-            .as_ref()
-            .filter(|e| matches!(e.target, EditorTarget::Title(t) if t == id))
-            .map(|e| e.buffer.clone())
-        else {
-            return;
-        };
-        let mut buffer = buffer;
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut buffer)
-                .frame(egui::Frame::NONE)
-                .desired_width(f32::INFINITY),
-        );
-        ui::focused_underline(ui, &response);
-        if ui.input(|i| i.key_pressed(Key::Escape)) {
-            self.editor = None;
-        } else if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
-            let title = buffer.trim();
-            if !title.is_empty() {
-                if let Err(e) = TodoStore::new(db).update(id, Some(title), None, None, None) {
-                    self.inline_error = Some(e.to_string());
-                }
-            }
-            self.editor = None;
-            self.dirty = true;
-        } else if let Some(e) = &mut self.editor {
-            e.buffer = buffer;
         }
     }
 
@@ -878,8 +1338,11 @@ impl TodoUi {
             return;
         }
         let items = self.trash.clone();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for item in &items {
+        for item in &items {
+            ui.add_space(CARD_GAP_PX);
+            let frame = self.card_frame(ui, false);
+            let inner = frame.show(ui, |ui| {
+                ui.set_min_height(32.0 - 8.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&item.title).color(ui.visuals().weak_text_color()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -907,303 +1370,8 @@ impl TodoUi {
                         }
                     });
                 });
-            }
-        });
-    }
-
-    // ── detail pane (right) ───────────────────────────────────────────────
-
-    fn detail_pane(&mut self, ui: &mut Ui, db: &Db, toasts: &mut Vec<String>) {
-        ui.add_space(12.0);
-        let Some(id) = self.selected else {
-            ui::empty_state(ui, "Select a todo", "Details appear here");
-            return;
-        };
-        let Ok(todo) = TodoStore::new(db).get(id) else {
-            self.selected = None;
-            return;
-        };
-        if todo.deleted_at.is_some() {
-            ui::empty_state(ui, "Todo is in the trash", "Restore it from the Trash view");
-            return;
-        }
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.add_space(4.0);
-            // Title
-            ui.label(
-                RichText::new(&todo.title)
-                    .size(fonts::SIZE_HEADING)
-                    .strong(),
-            );
-            ui.add_space(8.0);
-
-            // Status (text label, colored per mapping — no pills).
-            ui.horizontal_wrapped(|ui| {
-                for status in [
-                    Status::Open,
-                    Status::InProgress,
-                    Status::Done,
-                    Status::Cancelled,
-                ] {
-                    let color = status_color(ui, status);
-                    let text = RichText::new(status.label()).color(color);
-                    if ui.selectable_label(todo.status == status, text).clicked() {
-                        match TodoStore::new(db).set_status(todo.id, status) {
-                            Ok(_) => self.dirty = true,
-                            Err(TodoError::OpenDescendants(n)) => {
-                                toasts.push(format!(
-                                    "Cannot complete: {n} open descendant(s) remain"
-                                ));
-                            }
-                            Err(e) => toasts.push(e.to_string()),
-                        }
-                    }
-                }
             });
-            ui.add_space(8.0);
-
-            // Priority: segmented text row, same language as the status row
-            // (the compact dot stays in tree rows).
-            ui.horizontal_wrapped(|ui| {
-                for value in 0..=3u8 {
-                    let p = Priority::new(value).unwrap_or(Priority::NORMAL);
-                    let color = priority_text_color(ui, p);
-                    let text = RichText::new(p.label()).color(color);
-                    if ui
-                        .selectable_label(todo.priority == p, text)
-                        .on_hover_text(p.label())
-                        .clicked()
-                    {
-                        if let Err(e) =
-                            TodoStore::new(db).update(todo.id, None, None, Some(p), None)
-                        {
-                            toasts.push(e.to_string());
-                        } else {
-                            self.dirty = true;
-                        }
-                    }
-                }
-            });
-            ui.add_space(8.0);
-
-            // Due date (validated text, no calendar widget in M1).
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Due").small());
-                if self.due_for != Some(todo.id) {
-                    self.due_buffer = todo.due_date.map(|d| d.to_string()).unwrap_or_default();
-                    self.due_for = Some(todo.id);
-                }
-                let mut buffer = self.due_buffer.clone();
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut buffer)
-                        .frame(egui::Frame::NONE)
-                        .desired_width(110.0)
-                        .hint_text("YYYY-MM-DD"),
-                );
-                ui::focused_underline(ui, &response);
-                ui::hovered_underline(ui, &response);
-                if response.lost_focus() || ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S))
-                {
-                    self.commit_due(db, todo.id, &buffer, toasts);
-                }
-                if todo.due_date.is_some() && ui::ghost_button(ui, "Clear").clicked() {
-                    self.due_buffer.clear();
-                    self.due_for = None;
-                    if let Err(e) = TodoStore::new(db).update(todo.id, None, None, None, Some(None))
-                    {
-                        toasts.push(e.to_string());
-                    }
-                    self.dirty = true;
-                }
-            });
-            ui.add_space(8.0);
-
-            // Actions (mouse parity for the keyboard shortcuts, §7a:
-            // destructive/secondary actions grouped under an explicit label).
-            ui.label(RichText::new("Actions").small());
-            ui.horizontal(|ui| {
-                if ui::ghost_button(ui, "Add sub-todo")
-                    .on_hover_text("New sub-todo of this item")
-                    .clicked()
-                {
-                    self.editor = Some(Editor {
-                        target: EditorTarget::NewTodo {
-                            group: todo.group_id,
-                            parent: Some(todo.id),
-                        },
-                        buffer: String::new(),
-                    });
-                    self.view = View::Tree;
-                    self.collapsed.remove(&todo.id);
-                }
-                let (index, count) = self.sibling_index(todo.id).unwrap_or((0, 1));
-                let accent = accent_of(ui);
-                let move_up =
-                    egui::Button::new(RichText::new("Move up").color(accent)).frame(false);
-                if ui
-                    .add_enabled(index > 0, move_up)
-                    .on_hover_text("Move up among siblings (Alt+↑)")
-                    .clicked()
-                {
-                    if let Err(e) = TodoStore::new(db).reorder(todo.id, true) {
-                        toasts.push(e.to_string());
-                    } else {
-                        self.dirty = true;
-                    }
-                }
-                let move_down =
-                    egui::Button::new(RichText::new("Move down").color(accent)).frame(false);
-                if ui
-                    .add_enabled(index + 1 < count, move_down)
-                    .on_hover_text("Move down among siblings (Alt+↓)")
-                    .clicked()
-                {
-                    if let Err(e) = TodoStore::new(db).reorder(todo.id, false) {
-                        toasts.push(e.to_string());
-                    } else {
-                        self.dirty = true;
-                    }
-                }
-            });
-            ui.add_space(8.0);
-
-            // Notes (multiline: blur or Ctrl+S saves, no save button).
-            ui.label(RichText::new("Notes").small());
-            let notes = match &self.notes_buffer {
-                Some((buf_id, buf)) if *buf_id == todo.id => buf.clone(),
-                _ => todo.notes.clone(),
-            };
-            let mut notes_edit = notes.clone();
-            let response = ui.add(
-                egui::TextEdit::multiline(&mut notes_edit)
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(6)
-                    .hint_text("Notes… (saved on blur or Ctrl+S)"),
-            );
-            ui::focused_underline(ui, &response);
-            let save = response.lost_focus()
-                || (response.has_focus()
-                    && ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S)));
-            if save {
-                if notes_edit != todo.notes {
-                    if let Err(e) =
-                        TodoStore::new(db).update(todo.id, None, Some(&notes_edit), None, None)
-                    {
-                        toasts.push(e.to_string());
-                    } else {
-                        self.dirty = true;
-                    }
-                }
-                self.notes_buffer = None;
-            } else {
-                self.notes_buffer = Some((todo.id, notes_edit));
-            }
-            ui.add_space(8.0);
-
-            self.blocked_by_section(ui, db, &todo, toasts);
-            ui.add_space(12.0);
-
-            // Delete (destructive, behind explicit affordance — §7a principle 4).
-            if ui::ghost_button(ui, "Move to trash…").clicked() {
-                let subtree = TodoStore::new(db).live_subtree_count(todo.id).unwrap_or(1);
-                self.confirm = Some(Confirm::Trash {
-                    id: todo.id,
-                    title: todo.title.clone(),
-                    subtree,
-                });
-            }
-        });
-    }
-
-    fn commit_due(&mut self, db: &Db, id: Uuid, buffer: &str, toasts: &mut Vec<String>) {
-        let trimmed = buffer.trim();
-        let parsed: Option<NaiveDate> = if trimmed.is_empty() {
-            None
-        } else {
-            match NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-                Ok(d) => Some(d),
-                Err(_) => {
-                    toasts.push(format!("Invalid date {trimmed:?} — use YYYY-MM-DD"));
-                    self.due_buffer.clear();
-                    return;
-                }
-            }
-        };
-        match TodoStore::new(db).update(id, None, None, None, Some(parsed)) {
-            Ok(_) => self.dirty = true,
-            Err(e) => toasts.push(e.to_string()),
-        }
-        self.due_buffer.clear();
-        self.due_for = None;
-    }
-
-    fn blocked_by_section(&mut self, ui: &mut Ui, db: &Db, todo: &Todo, toasts: &mut Vec<String>) {
-        ui.label(RichText::new("Blocked by").small());
-        let links = LinkStore::new(db);
-        let target = EntityRef::new(EntityType::Todo, todo.id);
-        let incoming = links.links_to(&target).unwrap_or_default();
-        let blocked_by: Vec<Uuid> = incoming
-            .iter()
-            .filter(|l| l.relation.is_blocks() && l.source.kind == EntityType::Todo)
-            .map(|l| l.source.id)
-            .collect();
-        let store = TodoStore::new(db);
-        for blocker in &blocked_by {
-            let label = store
-                .get(*blocker)
-                .map(|t| t.title)
-                .unwrap_or_else(|_| "Unavailable".to_string());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(label).small());
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui::ghost_button(ui, "Remove").clicked() {
-                        let source = EntityRef::new(EntityType::Todo, *blocker);
-                        if let Err(e) = links.unlink(&source, &target, &Relation::blocks()) {
-                            toasts.push(e.to_string());
-                        }
-                    }
-                });
-            });
-        }
-
-        // Picker: search live todos by title; cycle rejected inline.
-        let mut search = self.blocked_search.clone();
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut search)
-                .frame(egui::Frame::NONE)
-                .desired_width(f32::INFINITY)
-                .hint_text("Search todos to add a blocker…"),
-        );
-        ui::focused_underline(ui, &response);
-        if response.changed() {
-            self.blocked_search = search.clone();
-        }
-        if !search.is_empty() {
-            let candidates = store.search(&search, Some(todo.id)).unwrap_or_default();
-            for candidate in candidates.iter().filter(|c| !blocked_by.contains(&c.id)) {
-                let full_text = format!("{} — {}", candidate.title, candidate.status.label());
-                if ui
-                    .add(egui::Label::new(RichText::new(full_text).small()).sense(Sense::click()))
-                    .clicked()
-                {
-                    let source = EntityRef::new(EntityType::Todo, candidate.id);
-                    match links.link(&source, &target, &Relation::blocks()) {
-                        Ok(()) => {
-                            self.blocked_search.clear();
-                            self.dirty = true;
-                        }
-                        Err(crate::core::link::LinkError::Cycle) => {
-                            toasts.push(format!(
-                                "Cannot link: {} would create a dependency cycle",
-                                candidate.title
-                            ));
-                        }
-                        Err(e) => toasts.push(e.to_string()),
-                    }
-                }
-            }
+            let _ = inner;
         }
     }
 
@@ -1257,6 +1425,7 @@ impl TodoUi {
                                 if self.selected == Some(id) {
                                     self.selected = None;
                                 }
+                                self.unfolded.remove(&id);
                                 self.dirty = true;
                             }
                             Err(e) => toasts.push(e.to_string()),
@@ -1274,7 +1443,45 @@ impl TodoUi {
     }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────
+// ── badge + color helpers ─────────────────────────────────────────────────
+
+/// A small rounded pill (12px text, 4px h-pad). Non-interactive; returns
+/// its rect so the card can exclude badge clicks from unfold toggling.
+fn pill(
+    ui: &mut Ui,
+    text: String,
+    text_color: Color32,
+    fill: Color32,
+    outline: Option<Color32>,
+) -> egui::Rect {
+    let frame = egui::Frame::new()
+        .fill(fill)
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .stroke(outline.map_or(Stroke::NONE, |c| Stroke::new(1.0, c)));
+    let inner = frame.show(ui, |ui| {
+        ui.label(RichText::new(text).size(12.0).color(text_color));
+    });
+    inner.response.rect
+}
+
+/// Status pill style: Open = muted outline, In progress = warn fill,
+/// Done = success fill, Cancelled = muted fill (title also struck through).
+fn status_pill_style(
+    p: &theme::Palette,
+    status: Status,
+) -> (&'static str, Color32, Color32, Option<Color32>) {
+    match status {
+        Status::Open => ("Open", p.muted, Color32::TRANSPARENT, Some(p.muted)),
+        Status::InProgress => ("In progress", theme::contrast_on(p, p.warn), p.warn, None),
+        Status::Done => ("Done", theme::contrast_on(p, p.success), p.success, None),
+        Status::Cancelled => ("Cancelled", theme::contrast_on(p, p.muted), p.muted, None),
+    }
+}
+
+fn open_descendants_excluding_self(node: &TodoNode) -> usize {
+    node.open_descendant_count() - usize::from(!node.todo.status.is_terminal())
+}
 
 fn contains_match(node: &TodoNode, filter: &str) -> bool {
     let f = filter.to_lowercase();
@@ -1296,11 +1503,11 @@ fn count_matches(nodes: &[TodoNode], filter: &str) -> usize {
 }
 
 fn status_color(ui: &Ui, status: Status) -> Color32 {
+    let p = theme::palette(ui);
     match status {
         Status::Open => ui.visuals().text_color(),
-        // §7a: in_progress = theme yellow, done = theme green.
-        Status::InProgress => ui.visuals().warn_fg_color,
-        Status::Done => theme::palette(ui).success,
+        Status::InProgress => p.warn,
+        Status::Done => p.success,
         Status::Cancelled => ui.visuals().weak_text_color(),
     }
 }
@@ -1308,9 +1515,10 @@ fn status_color(ui: &Ui, status: Status) -> Color32 {
 /// Priority label colors: urgent = red, high = yellow/orange,
 /// normal = foreground, low = muted.
 fn priority_text_color(ui: &Ui, priority: Priority) -> Color32 {
+    let p = theme::palette(ui);
     match priority.value() {
-        3 => ui.visuals().error_fg_color,
-        2 => ui.visuals().warn_fg_color,
+        3 => p.danger,
+        2 => p.warn,
         1 => ui.visuals().text_color(),
         _ => ui.visuals().weak_text_color(),
     }

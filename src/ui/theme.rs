@@ -220,6 +220,20 @@ pub fn card_needs_border(p: &Palette) -> bool {
     (luma(p.card_fill) - luma(p.background)).abs() < CARD_BORDER_LUMA_THRESHOLD
 }
 
+/// Pick `text` or `background` — whichever reads better on `fill` (drives
+/// badge label colors on solid semantic fills).
+pub fn contrast_on(p: &Palette, fill: Color32) -> Color32 {
+    if (luma(fill) - luma(p.text)).abs() >= (luma(fill) - luma(p.background)).abs() {
+        p.text
+    } else {
+        p.background
+    }
+}
+
+pub fn luma(c: Color32) -> f32 {
+    (0.2126 * f32::from(c.r()) + 0.7152 * f32::from(c.g()) + 0.0722 * f32::from(c.b())) / 255.0
+}
+
 /// Map a palette to egui visuals. Built from the palette directly — not a
 /// `Visuals::dark()`/`light()` clone — so light themes are honored end-to-end.
 pub fn visuals(p: &Palette) -> Visuals {
@@ -308,10 +322,6 @@ pub fn ensure_contrast(
         m = blend_toward(m, fg, 0.2);
     }
     m
-}
-
-fn luma(c: Color32) -> f32 {
-    (0.2126 * f32::from(c.r()) + 0.7152 * f32::from(c.g()) + 0.0722 * f32::from(c.b())) / 255.0
 }
 
 fn blend_toward(c: Color32, target: Color32, t: f32) -> Color32 {
