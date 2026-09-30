@@ -88,6 +88,7 @@ CREATE TABLE emails (
   flags       TEXT NOT NULL DEFAULT '',    -- space-sep: seen flagged answered draft
   has_attachments INTEGER NOT NULL DEFAULT 0,
   body_text   TEXT,                        -- NULL = not fetched yet (cache)
+  body_html   TEXT,                        -- raw HTML part when present (NULL for plain-only mail); kept for future subset renderer (M3.5 candidate), never rendered in M2
   body_fetched_at TEXT,
   size        INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
@@ -158,7 +159,7 @@ CREATE TABLE email_sync_log (              -- lightweight diagnostics, no secret
 - Account sync cycle: connect (rustls, imap) → LIST folders → upsert email_folders + detect role by name (\INBOX/Sent/Drafts/Trash/Archive/Junk special-use attrs or name match) → per folder: if UIDVALIDITY changed → full resync of that folder; else incremental `UID FETCH last_uid+1:*` headers (ENVELOPE + FLAGS + RFC822.SIZE) → ingest rows (compute thread_id) → update last_uid.
 - Initial folder sync bound: if last_uid=0, fetch only newest 500 UIDs (via SEARCH ALL, take tail).
 - Poll: engine sleeps with recv_timeout(sync_interval) — per-account interval, min 60s.
-- Body fetch: on email open, UI sends FetchBody → engine `UID FETCH <uid> BODY[]` → mailparse → prefer text/plain; HTML-only → strip to text (simple tag-strip + entity decode — no html2text dep; keep it dumb, note quality limitation) → store body_text + body_fetched_at + snippet refresh + attachments metadata (no content). Cache eviction: at startup, `UPDATE emails SET body_text=NULL, body_fetched_at=NULL WHERE body_fetched_at < datetime('now','-90 days')`.
+- Body fetch: on email open, UI sends FetchBody → engine `UID FETCH <uid> BODY[]` → mailparse → prefer text/plain; HTML-only → strip to text (simple tag-strip + entity decode — no html2text dep; keep it dumb, note quality limitation) → when an HTML part exists, ALSO store it raw in `body_html` (future subset-renderer fodder; M2 never renders it) → store body_text + body_fetched_at + snippet refresh + attachments metadata (no content). Cache eviction: at startup, `UPDATE emails SET body_text=NULL, body_html=NULL, body_fetched_at=NULL WHERE body_fetched_at < datetime('now','-90 days')`.
 - Write-op push: engine applies pending email_write_ops (UID STORE FLAGS / UID MOVE or COPY+DELETE fallback) → mark done/failed. UI applies ops locally immediately (optimistic), engine reconciles.
 - Outbox send: approved item → build RFC822 via lettre Message builder → SMTP (rustls) → on success APPEND to Sent folder (best-effort; failure logged, mail still counts sent) → state=sent. state=failed keeps error; "Retry" re-approves.
 - All secrets: engine fetches password from keyring per connection, holds in memory only, zeroized on drop (secrecy crate NOT added — simple scope-dropped String is acceptable M2; note for hardening later).
