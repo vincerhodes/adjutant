@@ -5,7 +5,7 @@ use egui::{Align2, RichText};
 use super::fonts;
 
 const SHORTCUTS: &[(&str, &str)] = &[
-    ("Ctrl+N", "New todo (child of selection, if any)"),
+    ("Ctrl+N", "New todo (child of current selection, if any)"),
     ("Ctrl+Shift+N", "New group"),
     ("Enter", "Edit title / commit edit"),
     ("Esc", "Cancel edit / clear filter / close overlay"),
@@ -42,6 +42,14 @@ pub fn show(ctx: &egui::Context, open: &mut bool) {
                     }
                 });
             ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(
+                    "The \"+ New todo\" button in the tree header always creates a top-level todo.",
+                )
+                .small()
+                .color(ui.visuals().weak_text_color()),
+            );
+            ui.add_space(4.0);
             ui.label(
                 egui::RichText::new("Esc or F1 to close")
                     .small()

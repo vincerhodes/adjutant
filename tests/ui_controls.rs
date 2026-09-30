@@ -68,6 +68,22 @@ fn text_input_count(h: &Harness<'_, TodoHarnessState>) -> usize {
     h.query_all_by_role(Role::TextInput).count()
 }
 
+/// Focus the last single-line text input (the tree editor renders after the
+/// detail pane, so it sorts last) and type into it.
+fn type_in_last_input(h: &mut Harness<'static, TodoHarnessState>, text: &str) {
+    {
+        let inputs: Vec<_> = h.query_all_by_role(Role::TextInput).collect();
+        assert!(!inputs.is_empty());
+        inputs.last().unwrap().focus();
+    }
+    h.run();
+    {
+        let inputs: Vec<_> = h.query_all_by_role(Role::TextInput).collect();
+        inputs.last().unwrap().type_text(text);
+    }
+    h.run();
+}
+
 fn group_tree_titles(h: &Harness<'_, TodoHarnessState>) -> Vec<String> {
     let app = h.state();
     let store = TodoStore::new(&app.db);
@@ -187,6 +203,48 @@ fn mouse_new_todo_button_matches_ctrl_n() {
     h.key_press(Key::Enter);
     h.run();
     assert_eq!(group_tree_titles(&h), vec!["Via mouse".to_string()]);
+}
+
+/// The header button always creates a TOP-LEVEL todo; Ctrl+N nests under
+/// the selection. Both behaviors are deliberate and documented in F1.
+#[test]
+fn header_button_creates_top_level_but_ctrl_n_nests() {
+    let mut h = make_harness_with_todos();
+    h.run();
+    // Select A (first row).
+    h.key_press(Key::ArrowDown);
+    h.run();
+    // Ctrl+N → child of A.
+    h.key_press_modifiers(Modifiers::CTRL, Key::N);
+    h.run();
+    type_in_last_input(&mut h, "Child");
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape); // close the auto-opened title editor
+    h.run();
+    // Back to A, then the header button → top-level.
+    h.key_press(Key::ArrowUp);
+    h.run();
+    h.get_by_label("+ New todo").click();
+    h.run();
+    type_in_last_input(&mut h, "Top");
+    h.key_press(Key::Enter);
+    h.run();
+    h.key_press(Key::Escape);
+    h.run();
+
+    let app = h.state();
+    let store = TodoStore::new(&app.db);
+    let group = app.todo.current_group().unwrap();
+    let tree = store.tree(group).unwrap();
+    let roots: Vec<String> = tree.iter().map(|n| n.todo.title.clone()).collect();
+    assert_eq!(
+        roots,
+        vec!["A".to_string(), "B".to_string(), "Top".to_string()]
+    );
+    let a = tree.iter().find(|n| n.todo.title == "A").unwrap();
+    let children: Vec<String> = a.children.iter().map(|n| n.todo.title.clone()).collect();
+    assert_eq!(children, vec!["Child".to_string()]);
 }
 
 #[test]

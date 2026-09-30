@@ -162,10 +162,12 @@ impl eframe::App for AdjutantApp {
                     ui.separator();
                     self.todo.sidebar(ui, &self.db);
                 }
-                // Pin the help affordance to the sidebar bottom.
+                // Pin the help affordance to the sidebar bottom, in normal
+                // foreground (a persistent control, not a hint).
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     ui.add_space(8.0);
-                    if crate::ui::ghost_button(ui, "Help")
+                    let fg = ui.visuals().text_color();
+                    if crate::ui::ghost_button_with(ui, "Help", fg)
                         .on_hover_text("Keyboard shortcuts (F1)")
                         .clicked()
                     {

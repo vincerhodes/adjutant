@@ -95,6 +95,19 @@ pub fn focused_underline(ui: &Ui, response: &Response) {
     }
 }
 
+/// Muted hover underline for borderless inputs, so they read as editable
+/// before focus (accent underline takes over when focused).
+pub fn hovered_underline(ui: &Ui, response: &Response) {
+    if response.hovered() && !response.has_focus() {
+        let rect = response.rect;
+        ui.painter().hline(
+            rect.left()..=rect.right(),
+            rect.bottom() - 1.0,
+            Stroke::new(1.0, ui.visuals().weak_text_color()),
+        );
+    }
+}
+
 /// 18px todo checkbox, fully painter-drawn: the stock egui 0.36 checkbox
 /// takes its outline color from widget-state visuals and cannot be styled
 /// per-instance. Unchecked = visible muted outline; checked = accent fill

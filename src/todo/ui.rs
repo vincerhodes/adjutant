@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use chrono::{Local, NaiveDate};
-use egui::{Align, Color32, Context, Key, Layout, RichText, Sense, Stroke, Ui};
+use egui::{Align, Color32, Context, Key, Layout, RichText, Sense, Ui};
 use uuid::Uuid;
 
 use crate::core::entity::{EntityRef, EntityType};
@@ -132,19 +132,18 @@ impl TodoUi {
     /// left panel.
     pub fn sidebar(&mut self, ui: &mut Ui, db: &Db) {
         ui.add_space(8.0);
+        // "Groups" label with the new-group button immediately beside it.
         ui.horizontal(|ui| {
             ui.label(RichText::new("Groups").size(fonts::SIZE_SMALL).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui::ghost_button(ui, "+")
-                    .on_hover_text("New group (Ctrl+Shift+N)")
-                    .clicked()
-                {
-                    self.editor = Some(Editor {
-                        target: EditorTarget::NewGroup,
-                        buffer: String::new(),
-                    });
-                }
-            });
+            if ui::ghost_button(ui, "+")
+                .on_hover_text("New group (Ctrl+Shift+N)")
+                .clicked()
+            {
+                self.editor = Some(Editor {
+                    target: EditorTarget::NewGroup,
+                    buffer: String::new(),
+                });
+            }
         });
         ui.add_space(4.0);
 
@@ -160,6 +159,20 @@ impl TodoUi {
         for group in self.groups.clone() {
             let selected = self.view == View::Tree && self.current_group == Some(group.id);
             let response = ui.selectable_label(selected, group.name.clone());
+            if selected {
+                // Same selection language as todo rows: fill + 3px accent bar.
+                let strip = response.rect.expand2(egui::vec2(10.0, 3.0));
+                ui.painter().rect_filled(
+                    strip,
+                    egui::CornerRadius::same(3),
+                    with_alpha(accent_of(ui), 0.18),
+                );
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(strip.min, egui::vec2(3.0, strip.height())),
+                    0.0,
+                    accent_of(ui),
+                );
+            }
             if response.clicked() {
                 activate = Some((group.id, View::Tree));
             }
@@ -387,11 +400,17 @@ impl TodoUi {
         });
     }
 
-    /// Open the new-todo editor (Ctrl+N / "+ New todo" button). The new todo
-    /// becomes a child of the current selection, if any.
+    /// Ctrl+N: open the new-todo editor nested under the current selection,
+    /// if any (documented in the F1 overlay).
     fn start_new_todo(&mut self, toasts: &mut Vec<String>) {
+        let parent = self.selected;
+        self.open_new_todo_editor(parent, toasts);
+    }
+
+    /// Open the new-todo editor in the current group. `parent = None`
+    /// creates a top-level todo (header button); `Some(id)` nests.
+    fn open_new_todo_editor(&mut self, parent: Option<Uuid>, toasts: &mut Vec<String>) {
         if let Some(group) = self.current_group {
-            let parent = self.selected;
             self.editor = Some(Editor {
                 target: EditorTarget::NewTodo { group, parent },
                 buffer: String::new(),
@@ -449,7 +468,8 @@ impl TodoUi {
             return;
         };
 
-        // Tree header: group name left, actions right (ghost buttons, §7a).
+        // Tree header: group name with the actions immediately beside it
+        // (ghost buttons, §7a — not right-aligned across the pane).
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             let name = self
@@ -459,28 +479,28 @@ impl TodoUi {
                 .map(|g| g.name.clone())
                 .unwrap_or_default();
             ui.label(RichText::new(name).size(fonts::SIZE_HEADING).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if self.filter_active
-                    && ui::ghost_button(ui, "✕")
-                        .on_hover_text("Clear filter (Esc)")
-                        .clicked()
-                {
-                    self.filter_active = false;
-                    self.filter.clear();
-                }
-                if ui::ghost_button(ui, "Filter…")
-                    .on_hover_text("Filter todos (Ctrl+F)")
+            if ui::ghost_button(ui, "+ New todo")
+                .on_hover_text("New top-level todo (Ctrl+N nests under the selection)")
+                .clicked()
+            {
+                // Deliberately top-level: child-of-selection from a button
+                // is undiscoverable. Ctrl+N keeps the nesting behavior.
+                self.open_new_todo_editor(None, toasts);
+            }
+            if ui::ghost_button(ui, "Filter…")
+                .on_hover_text("Filter todos (Ctrl+F)")
+                .clicked()
+            {
+                self.filter_active = true;
+            }
+            if self.filter_active
+                && ui::ghost_button(ui, "✕")
+                    .on_hover_text("Clear filter (Esc)")
                     .clicked()
-                {
-                    self.filter_active = true;
-                }
-                if ui::ghost_button(ui, "+ New todo")
-                    .on_hover_text("New todo (Ctrl+N)")
-                    .clicked()
-                {
-                    self.start_new_todo(toasts);
-                }
-            });
+            {
+                self.filter_active = false;
+                self.filter.clear();
+            }
         });
         ui.add_space(4.0);
 
@@ -683,7 +703,7 @@ impl TodoUi {
         self.visible_order.push(node.todo.id);
         let selected = self.selected == Some(node.todo.id);
         let row_bg = if selected {
-            with_alpha(accent_of(ui), 0.10)
+            with_alpha(accent_of(ui), 0.18)
         } else {
             Color32::TRANSPARENT
         };
@@ -760,9 +780,12 @@ impl TodoUi {
         if ui.is_rect_visible(row_rect) {
             if selected {
                 ui.painter().rect_filled(row_rect, 0.0, row_bg);
-                ui.painter().line_segment(
-                    [row_rect.left_top(), row_rect.left_bottom()],
-                    Stroke::new(3.0, accent_of(ui)),
+                // 3px accent bar as a filled rect — a stroked line at the
+                // clip edge renders faint/half-clipped.
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(row_rect.min, egui::vec2(3.0, row_rect.height())),
+                    0.0,
+                    accent_of(ui),
                 );
             } else if row.response.hovered() {
                 ui.painter()
@@ -918,14 +941,18 @@ impl TodoUi {
             });
             ui.add_space(8.0);
 
-            // Priority dots (4 choices, dot language).
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Priority").small());
+            // Priority: segmented text row, same language as the status row
+            // (the compact dot stays in tree rows).
+            ui.horizontal_wrapped(|ui| {
                 for value in 0..=3u8 {
                     let p = Priority::new(value).unwrap_or(Priority::NORMAL);
-                    let active = todo.priority == p;
-                    let response = ui::priority_dot(ui, p);
-                    if response.clicked() {
+                    let color = priority_text_color(ui, p);
+                    let text = RichText::new(p.label()).color(color);
+                    if ui
+                        .selectable_label(todo.priority == p, text)
+                        .on_hover_text(p.label())
+                        .clicked()
+                    {
                         if let Err(e) =
                             TodoStore::new(db).update(todo.id, None, None, Some(p), None)
                         {
@@ -934,14 +961,6 @@ impl TodoUi {
                             self.dirty = true;
                         }
                     }
-                    if active {
-                        ui.painter().circle_stroke(
-                            response.rect.center(),
-                            4.5,
-                            Stroke::new(1.0, accent_of(ui)),
-                        );
-                    }
-                    response.on_hover_text(p.label());
                 }
             });
             ui.add_space(8.0);
@@ -961,6 +980,7 @@ impl TodoUi {
                         .hint_text("YYYY-MM-DD"),
                 );
                 ui::focused_underline(ui, &response);
+                ui::hovered_underline(ui, &response);
                 if response.lost_focus() || ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S))
                 {
                     self.commit_due(db, todo.id, &buffer, toasts);
@@ -977,41 +997,9 @@ impl TodoUi {
             });
             ui.add_space(8.0);
 
-            // Notes (multiline: blur or Ctrl+S saves, no save button).
-            ui.label(RichText::new("Notes").small());
-            let notes = match &self.notes_buffer {
-                Some((buf_id, buf)) if *buf_id == todo.id => buf.clone(),
-                _ => todo.notes.clone(),
-            };
-            let mut notes_edit = notes.clone();
-            let response = ui.add(
-                egui::TextEdit::multiline(&mut notes_edit)
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(6)
-                    .hint_text("Notes… (saved on blur or Ctrl+S)"),
-            );
-            ui::focused_underline(ui, &response);
-            let save = response.lost_focus()
-                || (response.has_focus()
-                    && ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S)));
-            if save {
-                if notes_edit != todo.notes {
-                    if let Err(e) =
-                        TodoStore::new(db).update(todo.id, None, Some(&notes_edit), None, None)
-                    {
-                        toasts.push(e.to_string());
-                    } else {
-                        self.dirty = true;
-                    }
-                }
-                self.notes_buffer = None;
-            } else {
-                self.notes_buffer = Some((todo.id, notes_edit));
-            }
-            ui.add_space(8.0);
-
-            // Mouse parity for keyboard shortcuts (§7a: ghost buttons).
+            // Actions (mouse parity for the keyboard shortcuts, §7a:
+            // destructive/secondary actions grouped under an explicit label).
+            ui.label(RichText::new("Actions").small());
             ui.horizontal(|ui| {
                 if ui::ghost_button(ui, "Add sub-todo")
                     .on_hover_text("New sub-todo of this item")
@@ -1056,6 +1044,40 @@ impl TodoUi {
                     }
                 }
             });
+            ui.add_space(8.0);
+
+            // Notes (multiline: blur or Ctrl+S saves, no save button).
+            ui.label(RichText::new("Notes").small());
+            let notes = match &self.notes_buffer {
+                Some((buf_id, buf)) if *buf_id == todo.id => buf.clone(),
+                _ => todo.notes.clone(),
+            };
+            let mut notes_edit = notes.clone();
+            let response = ui.add(
+                egui::TextEdit::multiline(&mut notes_edit)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(6)
+                    .hint_text("Notes… (saved on blur or Ctrl+S)"),
+            );
+            ui::focused_underline(ui, &response);
+            let save = response.lost_focus()
+                || (response.has_focus()
+                    && ui.input(|i| i.modifiers.ctrl && i.key_pressed(Key::S)));
+            if save {
+                if notes_edit != todo.notes {
+                    if let Err(e) =
+                        TodoStore::new(db).update(todo.id, None, Some(&notes_edit), None, None)
+                    {
+                        toasts.push(e.to_string());
+                    } else {
+                        self.dirty = true;
+                    }
+                }
+                self.notes_buffer = None;
+            } else {
+                self.notes_buffer = Some((todo.id, notes_edit));
+            }
             ui.add_space(8.0);
 
             self.blocked_by_section(ui, db, &todo, toasts);
@@ -1258,6 +1280,17 @@ fn status_color(ui: &Ui, status: Status) -> Color32 {
         Status::InProgress => ui.visuals().warn_fg_color,
         Status::Done => theme::success_color(ui),
         Status::Cancelled => ui.visuals().weak_text_color(),
+    }
+}
+
+/// Priority label colors: urgent = red, high = yellow/orange,
+/// normal = foreground, low = muted.
+fn priority_text_color(ui: &Ui, priority: Priority) -> Color32 {
+    match priority.value() {
+        3 => ui.visuals().error_fg_color,
+        2 => ui.visuals().warn_fg_color,
+        1 => ui.visuals().text_color(),
+        _ => ui.visuals().weak_text_color(),
     }
 }
 
