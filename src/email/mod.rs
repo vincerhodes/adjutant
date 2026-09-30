@@ -795,6 +795,32 @@ impl<'a> EmailStore<'a> {
         Ok(())
     }
 
+    /// Subject/from search for the todo picker's email entries
+    /// (todo → email `mentions` links). Returns (id, subject, from_addr).
+    pub fn search_emails(&self, needle: &str, limit: usize) -> Result<Vec<(Uuid, String, String)>> {
+        let pattern = format!("%{}%", needle.to_lowercase());
+        let mut stmt = self.conn().prepare(
+            "SELECT id, subject, from_addr FROM emails
+             WHERE lower(subject) LIKE ?1 OR lower(from_addr) LIKE ?1
+             ORDER BY date DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            params![pattern, i64::try_from(limit).unwrap_or(10)],
+            |row| {
+                Ok((
+                    parse_uuid(&row.get::<_, String>(0)?)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                ))
+            },
+        )?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     // ── sync log ──────────────────────────────────────────────────────────
 
     pub fn log_sync(&self, account_id: Uuid, event: &str, detail: &str) -> Result<()> {

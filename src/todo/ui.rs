@@ -1414,6 +1414,31 @@ impl TodoUi {
                         }
                     }
                 }
+                // Email entries: link this todo to a message (mentions).
+                let email_store = crate::email::EmailStore::new(db);
+                if let Ok(emails) = email_store.search_emails(&search, 5) {
+                    for (email_id, subject, from) in emails {
+                        let text = format!("✉ {subject} — {from}");
+                        let response = ui.add(
+                            egui::Label::new(RichText::new(text).small()).sense(Sense::click()),
+                        );
+                        if response.clicked() {
+                            *inner_clicked = true;
+                            let email_ref = EntityRef::new(EntityType::Email, email_id);
+                            match links.link(
+                                &target,
+                                &email_ref,
+                                &Relation::from(Relation::MENTIONS),
+                            ) {
+                                Ok(()) => {
+                                    self.blocked_search.clear();
+                                    toasts.push("Linked email".to_string());
+                                }
+                                Err(e) => toasts.push(e.to_string()),
+                            }
+                        }
+                    }
+                }
             }
         }
     }
