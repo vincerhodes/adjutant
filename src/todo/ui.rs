@@ -319,10 +319,36 @@ impl TodoUi {
     }
 
     fn tree_contains(&self, id: Uuid) -> bool {
-        fn walk(nodes: &[TodoNode], id: Uuid) -> bool {
-            nodes
-                .iter()
-                .any(|n| n.todo.id == id || walk(&n.children, id))
+        self.find_node(id).is_some()
+    }
+
+    fn find_node(&self, id: Uuid) -> Option<&TodoNode> {
+        fn walk(nodes: &[TodoNode], id: Uuid) -> Option<&TodoNode> {
+            for n in nodes {
+                if n.todo.id == id {
+                    return Some(n);
+                }
+                if let Some(hit) = walk(&n.children, id) {
+                    return Some(hit);
+                }
+            }
+            None
+        }
+        walk(&self.tree, id)
+    }
+
+    /// Parent of `id` within the current tree, if any.
+    fn parent_of(&self, id: Uuid) -> Option<Uuid> {
+        fn walk(nodes: &[TodoNode], id: Uuid) -> Option<Uuid> {
+            for n in nodes {
+                if n.children.iter().any(|c| c.todo.id == id) {
+                    return Some(n.todo.id);
+                }
+                if let Some(hit) = walk(&n.children, id) {
+                    return Some(hit);
+                }
+            }
+            None
         }
         walk(&self.tree, id)
     }
@@ -431,6 +457,31 @@ impl TodoUi {
             if i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp) {
                 let down = i.key_pressed(Key::ArrowDown);
                 self.move_selection(down);
+            }
+            // ←/→ fold/unfold (standard tree-view convention). Skipped while
+            // the filter field is active — its text editing owns the keys.
+            if !self.filter_active && i.key_pressed(Key::ArrowRight) {
+                if let Some(id) = self.selected {
+                    if !self.unfolded.contains(&id) {
+                        self.unfolded.insert(id);
+                    } else {
+                        let first_child = self
+                            .find_node(id)
+                            .and_then(|n| n.children.first().map(|c| c.todo.id));
+                        if let Some(child) = first_child {
+                            self.selected = Some(child);
+                        }
+                    }
+                }
+            }
+            if !self.filter_active && i.key_pressed(Key::ArrowLeft) {
+                if let Some(id) = self.selected {
+                    if self.unfolded.contains(&id) {
+                        self.unfolded.remove(&id);
+                    } else if let Some(parent) = self.parent_of(id) {
+                        self.selected = Some(parent);
+                    }
+                }
             }
             if i.key_pressed(Key::Enter) {
                 if let Some(id) = self.selected {

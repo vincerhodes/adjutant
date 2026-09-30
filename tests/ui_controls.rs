@@ -529,3 +529,102 @@ fn badge_presence_rules() {
     // Status pill on every card.
     assert_eq!(h.query_all_by_label("Open").count(), 6);
 }
+
+/// → unfolds the selected card (or moves to its first child when already
+/// unfolded); ← folds it (or moves to the parent when already folded).
+#[test]
+fn arrow_keys_fold_and_unfold_cards() {
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    let store = TodoStore::new(&db);
+    let group = store.create_group("Personal").unwrap();
+    let parent = store.create(group.id, None, "Parent").unwrap();
+    store.create(group.id, Some(parent.id), "Child").unwrap();
+    let todo = TodoUi::new(&db);
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_ui_state(
+            |ui, app: &mut TodoHarnessState| {
+                app.todo.sidebar(ui, &app.db);
+                let ctx = ui.ctx().clone();
+                app.todo
+                    .show(ui, &ctx, &app.db, &mut app.toasts, &mut app.focus_requested);
+            },
+            TodoHarnessState {
+                db,
+                todo,
+                toasts: Vec::new(),
+                focus_requested: false,
+            },
+        );
+    h.run();
+
+    // Select the parent; the folded card hides its child.
+    h.key_press(Key::ArrowDown);
+    h.run();
+    assert_eq!(
+        h.query_all_by_label("Child").count(),
+        0,
+        "folded card hides its children"
+    );
+
+    // → unfolds the selected card.
+    h.key_press(Key::ArrowRight);
+    h.run();
+    assert!(
+        h.query_all_by_label("Child").count() >= 1,
+        "→ unfolds the selected card"
+    );
+
+    // → again moves selection to the first child (verify via Space toggle).
+    h.key_press(Key::ArrowRight);
+    h.run();
+    h.key_press(Key::Space);
+    h.run();
+    {
+        let app = h.state();
+        let store = TodoStore::new(&app.db);
+        let (pid, cid) = find_parent_child(&store, app.todo.current_group().unwrap());
+        assert_eq!(
+            store.get(cid).unwrap().status,
+            adjutant::todo::Status::Done,
+            "selection moved to the first child"
+        );
+        assert_eq!(store.get(pid).unwrap().status, adjutant::todo::Status::Open);
+    }
+
+    // ← on the folded child selects its parent.
+    h.key_press(Key::ArrowLeft);
+    h.run();
+    h.key_press(Key::Space);
+    h.run();
+    {
+        let app = h.state();
+        let store = TodoStore::new(&app.db);
+        let (pid, cid) = find_parent_child(&store, app.todo.current_group().unwrap());
+        let _ = cid;
+        assert_eq!(
+            store.get(pid).unwrap().status,
+            adjutant::todo::Status::Done,
+            "← on a folded child selects its parent"
+        );
+        // Reopen both for the fold assertion below.
+        store.set_status(pid, adjutant::todo::Status::Open).unwrap();
+    }
+
+    // ← on the unfolded parent folds it; the child disappears.
+    h.key_press(Key::ArrowLeft);
+    h.run();
+    assert_eq!(
+        h.query_all_by_label("Child").count(),
+        0,
+        "← folds the unfolded card"
+    );
+}
+
+/// Ids of the "Parent"/"Child" todos seeded by the arrow-key test.
+fn find_parent_child(store: &TodoStore, group: uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
+    let tree = store.tree(group).unwrap();
+    let parent = tree.iter().find(|n| n.todo.title == "Parent").unwrap();
+    let child = &parent.children[0];
+    (parent.todo.id, child.todo.id)
+}
