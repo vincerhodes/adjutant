@@ -33,16 +33,11 @@ pub fn show(
         return;
     };
 
-    // Header row: back, subject, prev/next.
+    // Header row: back, subject, prev/next + reply actions — all icon
+    // buttons whose labels slide in on hover (no tooltips).
     ui.add_space(24.0);
     ui.horizontal(|ui| {
-        if ui
-            .add(egui::Label::new(
-                RichText::new("‹ Back").color(theme::palette(ui).accent),
-            ))
-            .on_hover_text("Back to list (Esc)")
-            .clicked()
-        {
+        if crate::ui::icon_button(ui, icons::Icon::Back, "Back (Esc)", "back").clicked() {
             state.reading = None;
             return;
         }
@@ -58,15 +53,10 @@ pub fn show(
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let has_next = pos + 1 < order.len();
             let has_prev = pos > 0;
-            if ui
-                .add_enabled(
-                    has_next,
-                    egui::Button::new(RichText::new("Next →").color(theme::palette(ui).accent))
-                        .frame(false),
-                )
-                .on_hover_text("Next thread (j / →)")
-                .clicked()
-            {
+            let enabled_next = ui.add_enabled_ui(has_next, |ui| {
+                crate::ui::icon_button(ui, icons::Icon::ChevronRight, "Next thread (j)", "next")
+            });
+            if enabled_next.inner.clicked() {
                 let (a, t) = order[pos + 1];
                 state.reading = Some(ReadingState {
                     account_id: a,
@@ -74,15 +64,10 @@ pub fn show(
                 });
                 return;
             }
-            if ui
-                .add_enabled(
-                    has_prev,
-                    egui::Button::new(RichText::new("← Prev").color(theme::palette(ui).accent))
-                        .frame(false),
-                )
-                .on_hover_text("Previous thread (k / ←)")
-                .clicked()
-            {
+            let enabled_prev = ui.add_enabled_ui(has_prev, |ui| {
+                crate::ui::icon_button(ui, icons::Icon::ChevronLeft, "Previous thread (k)", "prev")
+            });
+            if enabled_prev.inner.clicked() {
                 let (a, t) = order[pos - 1];
                 state.reading = Some(ReadingState {
                     account_id: a,
@@ -90,9 +75,28 @@ pub fn show(
                 });
                 return;
             }
-            if !state.accounts.is_empty() && ui::ghost_button(ui, "Reply").clicked() {
-                open_reply(state, db, reading.thread_id);
-                state.reading = None;
+            if !state.accounts.is_empty() {
+                let forward =
+                    crate::ui::icon_button(ui, icons::Icon::Forward, "Forward", "forward")
+                        .clicked();
+                let reply_all =
+                    crate::ui::icon_button(ui, icons::Icon::ReplyAll, "Reply all", "reply-all")
+                        .clicked();
+                let reply =
+                    crate::ui::icon_button(ui, icons::Icon::Reply, "Reply", "reply").clicked();
+                let kind = if forward {
+                    Some(ComposeKind::Forward)
+                } else if reply_all {
+                    Some(ComposeKind::ReplyAll)
+                } else if reply {
+                    Some(ComposeKind::Reply)
+                } else {
+                    None
+                };
+                if let Some(kind) = kind {
+                    open_compose(state, db, reading.thread_id, kind);
+                    state.reading = None;
+                }
             }
         });
     });
@@ -193,7 +197,14 @@ pub fn show(
         });
 }
 
-fn open_reply(state: &mut EmailUi, db: &Db, thread_id: Uuid) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComposeKind {
+    Reply,
+    ReplyAll,
+    Forward,
+}
+
+fn open_compose(state: &mut EmailUi, db: &Db, thread_id: Uuid, kind: ComposeKind) {
     let _ = db;
     let Some(thread) = state
         .threads
@@ -208,20 +219,70 @@ fn open_reply(state: &mut EmailUi, db: &Db, thread_id: Uuid) {
     };
     let account_id = thread.account_id;
     let quote = crate::email::compose::quote_reply(latest);
-    let subject = if latest.subject.to_lowercase().starts_with("re:") {
-        latest.subject.clone()
-    } else {
-        format!("Re: {}", latest.subject)
+    let (subject, to, cc) = match kind {
+        ComposeKind::Reply => {
+            let subject = if latest.subject.to_lowercase().starts_with("re:") {
+                latest.subject.clone()
+            } else {
+                format!("Re: {}", latest.subject)
+            };
+            (subject, latest.from_addr.clone(), String::new())
+        }
+        ComposeKind::ReplyAll => {
+            let subject = if latest.subject.to_lowercase().starts_with("re:") {
+                latest.subject.clone()
+            } else {
+                format!("Re: {}", latest.subject)
+            };
+            // Everyone except the sender moves to Cc.
+            let others: Vec<String> = latest
+                .to
+                .iter()
+                .chain(latest.cc.iter())
+                .map(|a| a.addr.clone())
+                .filter(|addr| addr != &latest.from_addr)
+                .collect();
+            (subject, latest.from_addr.clone(), others.join(", "))
+        }
+        ComposeKind::Forward => {
+            let subject = if latest.subject.to_lowercase().starts_with("fwd:") {
+                latest.subject.clone()
+            } else {
+                format!("Fwd: {}", latest.subject)
+            };
+            let who = latest
+                .from_name
+                .clone()
+                .unwrap_or_else(|| latest.from_addr.clone());
+            let body = format!(
+                "\n\n---------- Forwarded message ----------\nFrom: {who}\nDate: {}\nSubject: {}\n\n{quote}",
+                list::short_date(&latest.date),
+                latest.subject,
+            );
+            let _ = body;
+            (subject, String::new(), String::new())
+        }
     };
-    let to = latest.from_addr.clone();
+    let body_prefix = match kind {
+        ComposeKind::Forward => format!(
+            "\n\n---------- Forwarded message ----------\nFrom: {}\nDate: {}\nSubject: {}\n\n{quote}",
+            latest
+                .from_name
+                .clone()
+                .unwrap_or_else(|| latest.from_addr.clone()),
+            list::short_date(&latest.date),
+            latest.subject,
+        ),
+        ComposeKind::Reply | ComposeKind::ReplyAll => format!("\n\n{quote}"),
+    };
     state.compose = Some(crate::email::ui::ComposeState {
         editing_outbox_id: None,
         account_id,
         to,
-        cc: String::new(),
+        cc,
         bcc: String::new(),
         subject,
-        body: format!("\n\n{quote}"),
+        body: body_prefix,
         in_reply_to: latest.message_id.clone(),
         source_email_id: Some(latest.id),
     });

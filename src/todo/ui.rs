@@ -186,7 +186,7 @@ impl TodoUi {
             let selected = self.view == View::Tree && self.current_group == Some(group.id);
             let row = ui.horizontal(|ui| {
                 icons::group_dot(ui, icons::group_dot_color(group.id), 10.0);
-                let response = ui.selectable_label(selected, group.name.clone());
+                let response = ui::selectable(ui, selected, group.name.clone());
                 (response.clicked(), response.double_clicked(), response.rect)
             });
             let (clicked, double_clicked, rect) = row.inner;
@@ -252,10 +252,7 @@ impl TodoUi {
         ui.add_space(12.0);
         ui.separator();
         let trash_label = format!("Trash ({})", self.trash_count);
-        if ui
-            .selectable_label(self.view == View::Trash, trash_label)
-            .clicked()
-        {
+        if ui::selectable(ui, self.view == View::Trash, trash_label).clicked() {
             self.view = View::Trash;
             self.editor = None; // tree editors don't render over the trash list
             self.dirty = true;
@@ -805,7 +802,7 @@ impl TodoUi {
                     if terminal {
                         text = text.color(ui.visuals().weak_text_color()).strikethrough();
                     }
-                    let response = ui.add(egui::Label::new(text).sense(Sense::click()));
+                    let response = ui::hand(ui.add(egui::Label::new(text).sense(Sense::click())));
                     if response.clicked() {
                         self.selected = Some(id);
                         child_clicked = true;
@@ -909,6 +906,9 @@ impl TodoUi {
             let hovered_now = ui
                 .input(|i| i.pointer.latest_pos())
                 .is_some_and(|pos| rect.contains(pos));
+            if hovered_now {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
             if hovered_now {
                 self.hovered_cards.insert(id);
             } else {
@@ -1031,7 +1031,7 @@ impl TodoUi {
             ] {
                 let color = status_color(ui, status);
                 let text = RichText::new(status.label()).color(color);
-                let response = ui.selectable_label(todo.status == status, text);
+                let response = ui::selectable(ui, todo.status == status, text);
                 if response.clicked() {
                     *inner_clicked = true;
                     match TodoStore::new(db).set_status(todo.id, status) {
@@ -1052,9 +1052,8 @@ impl TodoUi {
                 let pr = Priority::new(value).unwrap_or(Priority::NORMAL);
                 let color = priority_text_color(ui, pr);
                 let text = RichText::new(pr.label()).color(color);
-                let response = ui
-                    .selectable_label(todo.priority == pr, text)
-                    .on_hover_text(pr.label());
+                let response =
+                    ui::selectable(ui, todo.priority == pr, text).on_hover_text(pr.label());
                 if response.clicked() {
                     *inner_clicked = true;
                     if let Err(e) = TodoStore::new(db).update(todo.id, None, None, Some(pr), None) {
@@ -1463,12 +1462,13 @@ impl TodoUi {
                     ui.label(RichText::new(&item.title).color(ui.visuals().weak_text_color()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let red = ui.visuals().error_fg_color;
-                        if ui
-                            .add(
+                        if ui::hand(
+                            ui.add(
                                 egui::Button::new(RichText::new("Delete permanently").color(red))
                                     .frame(false),
-                            )
-                            .clicked()
+                            ),
+                        )
+                        .clicked()
                         {
                             let subtree =
                                 TodoStore::new(db).live_subtree_count(item.id).unwrap_or(1);

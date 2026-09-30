@@ -362,3 +362,47 @@ fn compose_stages_to_outbox() {
     assert_eq!(outbox[0].state, OutboxState::Staged);
     assert_eq!(outbox[0].to[0].addr, "sam@x.com");
 }
+
+#[test]
+fn reading_pane_icon_buttons_open_compose() {
+    let fx = fixture("reading-icons");
+    let mut h = boot(&fx);
+    h.run_steps(2);
+    h.get_by_label("Email").click();
+    h.run_steps(3);
+    // Open the first thread by clicking its subject label.
+    h.get_by_label("Alpha uno").click();
+    h.run_steps(3);
+    // Reading pane is up: icon buttons present by their AccessKit names.
+    assert_eq!(
+        h.query_all_by_label_contains("Reply (icon button)").count(),
+        1,
+        "reply icon button present"
+    );
+    h.get_by_label_contains("Reply (icon button)").click();
+    h.run_steps(3);
+    // Compose opened with reply prefill.
+    {
+        let inputs: Vec<_> = h.query_all_by_role(Role::TextInput).collect();
+        // To, Cc, Bcc, Subject (body is multiline).
+        assert_eq!(inputs.len(), 4);
+        assert_eq!(
+            inputs[0].value().as_deref(),
+            Some("ann@x.com"),
+            "reply to sender"
+        );
+        assert_eq!(
+            inputs[3].value().as_deref(),
+            Some("Re: Alpha uno"),
+            "reply subject"
+        );
+    }
+    {
+        let body: Vec<_> = h.query_all_by_role(Role::MultilineTextInput).collect();
+        assert_eq!(body.len(), 1);
+        assert!(
+            body[0].value().unwrap().contains("wrote:"),
+            "reply quotes the original"
+        );
+    }
+}

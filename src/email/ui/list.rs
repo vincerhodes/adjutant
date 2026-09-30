@@ -152,7 +152,8 @@ fn thread_card(ui: &mut Ui, state: &mut EmailUi, thread: &crate::email::model::E
             if unread {
                 subject_text = subject_text.strong();
             }
-            let subject_resp = ui.add(egui::Label::new(subject_text).sense(egui::Sense::click()));
+            let subject_resp =
+                ui::hand(ui.add(egui::Label::new(subject_text).sense(egui::Sense::click())));
             if subject_resp.clicked() || subject_resp.double_clicked() {
                 open(state);
                 child_clicked = true;
@@ -219,9 +220,12 @@ fn thread_card(ui: &mut Ui, state: &mut EmailUi, thread: &crate::email::model::E
 
     let rect = frame_response.response.rect;
     ui.ctx().data_mut(|d| d.insert_temp(card_id, rect));
+    let pointer = ui.input(|i| i.pointer.latest_pos());
+    if pointer.is_some_and(|pos| rect.contains(pos)) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     if let Some(response) = card_response {
         if response.clicked() && !child_clicked {
-            let pointer = ui.input(|i| i.pointer.latest_pos());
             let on_badge = badge_rects
                 .iter()
                 .any(|r| pointer.is_some_and(|pos| r.contains(pos)));

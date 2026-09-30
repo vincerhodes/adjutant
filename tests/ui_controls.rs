@@ -634,3 +634,27 @@ fn find_parent_child(store: &TodoStore, group: uuid::Uuid) -> (uuid::Uuid, uuid:
     let child = &parent.children[0];
     (parent.todo.id, child.todo.id)
 }
+
+#[test]
+fn sidebar_collapse_icon_button_toggles() {
+    let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+    TodoStore::new(&db).create_group("Personal").unwrap();
+    let mut h = Harness::builder()
+        .with_size([1200.0, 800.0])
+        .build_eframe(move |cc| AdjutantApp::new_with_engine(db, cc, None));
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label_contains("Groups").count(), 1);
+    // Icon-only collapse button: name present for AccessKit, click fires.
+    h.get_by_label_contains("Hide sidebar (icon button)")
+        .click();
+    h.run_steps(2);
+    assert_eq!(
+        h.query_all_by_label_contains("Groups").count(),
+        0,
+        "sidebar collapsed"
+    );
+    h.get_by_label_contains("Show sidebar (icon button)")
+        .click();
+    h.run_steps(2);
+    assert_eq!(h.query_all_by_label_contains("Groups").count(), 1);
+}

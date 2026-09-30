@@ -23,10 +23,16 @@ pub enum Icon {
     Branch,
     CircleSlash,
     Paperclip,
+    ChevronLeft,
+    ChevronRight,
+    Back,
+    Reply,
+    ReplyAll,
+    Forward,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 9] = [
+    pub const ALL: [Icon; 15] = [
         Icon::CircleOutline,
         Icon::CircleHalf,
         Icon::Check,
@@ -36,6 +42,12 @@ impl Icon {
         Icon::Branch,
         Icon::CircleSlash,
         Icon::Paperclip,
+        Icon::ChevronLeft,
+        Icon::ChevronRight,
+        Icon::Back,
+        Icon::Reply,
+        Icon::ReplyAll,
+        Icon::Forward,
     ];
 
     /// Paint the icon centered in `rect` (square) with `color`.
@@ -104,6 +116,61 @@ impl Icon {
                 let d = r * 0.62;
                 painter.line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
             }
+            Icon::ChevronLeft => {
+                painter.add(Shape::line(
+                    vec![
+                        pos(c, 0.55, -0.7, r),
+                        pos(c, -0.45, 0.0, r),
+                        pos(c, 0.55, 0.7, r),
+                    ],
+                    stroke,
+                ));
+            }
+            Icon::ChevronRight => {
+                painter.add(Shape::line(
+                    vec![
+                        pos(c, -0.55, -0.7, r),
+                        pos(c, 0.45, 0.0, r),
+                        pos(c, -0.55, 0.7, r),
+                    ],
+                    stroke,
+                ));
+            }
+            Icon::Back => {
+                // Leftwards arrow: shaft + head.
+                painter.line_segment([pos(c, 0.6, 0.0, r), pos(c, -0.5, 0.0, r)], stroke);
+                painter.add(Shape::line(
+                    vec![
+                        pos(c, -0.1, -0.55, r),
+                        pos(c, -0.6, 0.0, r),
+                        pos(c, -0.1, 0.55, r),
+                    ],
+                    stroke,
+                ));
+            }
+            Icon::Reply => {
+                // Curved arrow hooking back over its tail, head at bottom-left.
+                let arc = arc_points(pos(c, 0.25, -0.45, r), r * 0.95, 150.0, 300.0, 8);
+                painter.add(Shape::line(arc, stroke));
+                painter.line_segment([pos(c, -0.6, 0.15, r), pos(c, -0.15, 0.55, r)], stroke);
+                painter.line_segment([pos(c, -0.6, 0.15, r), pos(c, -0.35, -0.35, r)], stroke);
+            }
+            Icon::ReplyAll => {
+                // Two arcs (everyone) + arrow head.
+                let arc1 = arc_points(pos(c, 0.35, -0.4, r), r * 0.9, 150.0, 300.0, 7);
+                let arc2 = arc_points(pos(c, 0.1, -0.55, r), r * 0.75, 150.0, 300.0, 7);
+                painter.add(Shape::line(arc1, stroke));
+                painter.add(Shape::line(arc2, stroke));
+                painter.line_segment([pos(c, -0.65, 0.05, r), pos(c, -0.2, 0.45, r)], stroke);
+                painter.line_segment([pos(c, -0.65, 0.05, r), pos(c, -0.4, -0.45, r)], stroke);
+            }
+            Icon::Forward => {
+                // Mirror of reply: tail at bottom-left, arrow out top-right.
+                let arc = arc_points(pos(c, -0.25, 0.45, r), r * 0.95, -30.0, 120.0, 8);
+                painter.add(Shape::line(arc, stroke));
+                painter.line_segment([pos(c, 0.15, -0.55, r), pos(c, 0.6, -0.15, r)], stroke);
+                painter.line_segment([pos(c, 0.15, -0.55, r), pos(c, 0.35, 0.35, r)], stroke);
+            }
             Icon::Paperclip => {
                 // Double-loop paperclip: outer rounded rect + inner loop.
                 let outer = rounded_rect_points(c, r * 1.0, r * 0.45, 3);
@@ -121,6 +188,17 @@ impl Icon {
 
 fn pos(c: Pos2, fx: f32, fy: f32, r: f32) -> Pos2 {
     c + egui::vec2(fx * r, fy * r)
+}
+
+/// Sample an arc (degrees, 0 = east, counter-clockwise positive Y-down
+/// screen coords behave clockwise — fine for decorative icons).
+fn arc_points(center: Pos2, radius: f32, start_deg: f32, end_deg: f32, steps: usize) -> Vec<Pos2> {
+    (0..=steps)
+        .map(|k| {
+            let a = (start_deg + (end_deg - start_deg) * k as f32 / steps as f32).to_radians();
+            center + egui::vec2(radius * a.cos(), radius * a.sin())
+        })
+        .collect()
 }
 
 /// Closed rounded-rectangle outline centered on `c`, sampled as points.

@@ -253,9 +253,13 @@ impl eframe::App for AdjutantApp {
                     // Collapse toggle, top-right.
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::ui::ghost_button(ui, "«")
-                                .on_hover_text("Hide sidebar")
-                                .clicked()
+                            if crate::ui::icon_button(
+                                ui,
+                                crate::ui::icons::Icon::ChevronLeft,
+                                "Hide sidebar",
+                                "collapse",
+                            )
+                            .clicked()
                             {
                                 self.set_sidebar_collapsed(true);
                             }
@@ -269,7 +273,7 @@ impl eframe::App for AdjutantApp {
                     ] {
                         if module == Module::Todo || module == Module::Email {
                             let active = self.module == module;
-                            if ui.selectable_label(active, module.label()).clicked() {
+                            if crate::ui::selectable(ui, active, module.label()).clicked() {
                                 self.module = module;
                             }
                         } else {
@@ -324,9 +328,13 @@ impl eframe::App for AdjutantApp {
             egui::Area::new(egui::Id::new("sidebar_reveal"))
                 .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
                 .show(&ctx, |ui| {
-                    if crate::ui::ghost_button(ui, "»")
-                        .on_hover_text("Show sidebar")
-                        .clicked()
+                    if crate::ui::icon_button(
+                        ui,
+                        crate::ui::icons::Icon::ChevronRight,
+                        "Show sidebar",
+                        "reveal",
+                    )
+                    .clicked()
                     {
                         self.set_sidebar_collapsed(false);
                     }

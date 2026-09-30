@@ -58,8 +58,80 @@ pub fn ghost_button(ui: &mut Ui, text: &str) -> Response {
 /// Ghost button with an explicit text color (e.g. foreground for persistent
 /// affordances like Help, red for destructive actions).
 pub fn ghost_button_with(ui: &mut Ui, text: &str, color: Color32) -> Response {
-    let response = ui.add(egui::Button::new(RichText::new(text).color(color)).frame(false));
-    response
+    ui.add(egui::Button::new(RichText::new(text).color(color)).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Pointing-hand cursor over any clickable — central cursor-consistency
+/// rule (arrow elsewhere, I-beam only over editable text).
+pub fn hand(response: Response) -> Response {
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// selectable_label + hand cursor (nav items, segmented rows, groups).
+pub fn selectable(ui: &mut Ui, active: bool, text: impl Into<egui::WidgetText>) -> Response {
+    ui.selectable_label(active, text)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// An icon-only button whose LABEL slides in next to the icon on hover
+/// (no tooltip). Allocation uses last frame's hover state, so the label
+/// appears inline and the layout shifts — instant, by design.
+pub fn icon_button(ui: &mut Ui, icon: icons::Icon, label: &str, id_salt: &str) -> Response {
+    let id = ui.id().with(("icon_button", id_salt));
+    let hovered_last = ui
+        .ctx()
+        .data_mut(|d| d.get_temp::<bool>(id))
+        .unwrap_or(false);
+    let label_width = if hovered_last {
+        ui.painter()
+            .layout_no_wrap(
+                label.to_owned(),
+                egui::FontId::new(13.0, egui::FontFamily::Proportional),
+                Color32::WHITE,
+            )
+            .rect
+            .width()
+            + 6.0
+    } else {
+        0.0
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(22.0 + label_width, 22.0), egui::Sense::click());
+    let hovered = response.hovered();
+    if ui.is_rect_visible(rect) {
+        let p = theme::palette(ui);
+        let bg = if hovered {
+            with_alpha(p.accent, 0.10)
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(6), bg);
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + 12.0, rect.center().y),
+            egui::vec2(14.0, 14.0),
+        );
+        icon.paint(ui.painter(), icon_rect, p.accent);
+        if hovered_last {
+            ui.painter().text(
+                egui::pos2(icon_rect.right() + 5.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::new(13.0, egui::FontFamily::Proportional),
+                p.text,
+            );
+        }
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(id, hovered));
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("{label} (icon button)"),
+        )
+    });
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A 3px priority color dot (§7a: dot only, no badges).
@@ -161,7 +233,7 @@ pub fn todo_checkbox(ui: &mut Ui, checked: bool) -> Response {
             );
         }
     }
-    response
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Painter-drawn collapse triangle for tree rows. The ▸/▾ glyphs are not in
@@ -193,5 +265,9 @@ pub fn collapse_arrow(ui: &mut Ui, collapsed: bool) -> Response {
         ui.painter()
             .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
     }
-    response
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn with_alpha(c: Color32, a: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a.clamp(0.0, 1.0) * 255.0) as u8)
 }
