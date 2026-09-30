@@ -22,10 +22,11 @@ pub enum Icon {
     Clock,
     Branch,
     CircleSlash,
+    Paperclip,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 8] = [
+    pub const ALL: [Icon; 9] = [
         Icon::CircleOutline,
         Icon::CircleHalf,
         Icon::Check,
@@ -34,6 +35,7 @@ impl Icon {
         Icon::Clock,
         Icon::Branch,
         Icon::CircleSlash,
+        Icon::Paperclip,
     ];
 
     /// Paint the icon centered in `rect` (square) with `color`.
@@ -102,12 +104,52 @@ impl Icon {
                 let d = r * 0.62;
                 painter.line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], stroke);
             }
+            Icon::Paperclip => {
+                // Double-loop paperclip: outer rounded rect + inner loop.
+                let outer = rounded_rect_points(c, r * 1.0, r * 0.45, 3);
+                // Inner loop drawn open below.
+                painter.add(Shape::line(outer, stroke));
+                let mut inner_open = rounded_rect_open(c, r * 0.55, r * 0.3, 3);
+                // Open at the top-right so it reads as a clip.
+                let cut = inner_open.len() / 8;
+                inner_open.drain(0..cut);
+                painter.add(Shape::line(inner_open, stroke));
+            }
         }
     }
 }
 
 fn pos(c: Pos2, fx: f32, fy: f32, r: f32) -> Pos2 {
     c + egui::vec2(fx * r, fy * r)
+}
+
+/// Closed rounded-rectangle outline centered on `c`, sampled as points.
+fn rounded_rect_points(c: Pos2, half_w: f32, half_h: f32, corner_steps: usize) -> Vec<Pos2> {
+    let r = half_h.min(half_w * 0.9);
+    let corners = [
+        (c.x + half_w - r, c.y + half_h - r, 0.0_f32), // bottom-right, angle 0..90
+        (c.x - half_w + r, c.y + half_h - r, 90.0),    // bottom-left
+        (c.x - half_w + r, c.y - half_h + r, 180.0),   // top-left
+        (c.x + half_w - r, c.y - half_h + r, 270.0),   // top-right
+    ];
+    let mut pts = Vec::new();
+    for (cx, cy, start_deg) in corners {
+        for k in 0..corner_steps {
+            let a = (start_deg + 90.0 * k as f32 / corner_steps as f32).to_radians();
+            pts.push(egui::pos2(cx + r * a.cos(), cy + r * a.sin()));
+        }
+    }
+    pts.push(pts[0]);
+    pts
+}
+
+/// Open rounded-rect path starting/ending mid-arc (for the inner clip loop).
+fn rounded_rect_open(c: Pos2, half_w: f32, half_h: f32, corner_steps: usize) -> Vec<Pos2> {
+    let mut pts = rounded_rect_points(c, half_w, half_h, corner_steps);
+    pts.pop();
+    let cut = pts.len() / 4;
+    pts.rotate_left(cut);
+    pts
 }
 
 /// A 22px soft-tinted circular chip carrying an icon. `label` is the

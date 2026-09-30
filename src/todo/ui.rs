@@ -719,18 +719,7 @@ impl TodoUi {
     // ── cards ─────────────────────────────────────────────────────────────
 
     fn card_frame(&self, ui: &Ui, hovered: bool, unfolded: bool) -> egui::Frame {
-        let p = theme::palette(ui);
-        let mut frame = egui::Frame::new()
-            .fill(if hovered { p.card_hover } else { p.card_fill })
-            .corner_radius(egui::CornerRadius::same(if unfolded { 12 } else { 10 }))
-            .inner_margin(egui::Margin::symmetric(16, 10));
-        if let Some(shadow) = theme::card_shadow(&p, hovered) {
-            frame = frame.shadow(shadow);
-        }
-        if theme::shows_card_border(&p) {
-            frame = frame.stroke(Stroke::new(1.0, p.border));
-        }
-        frame
+        crate::ui::card_frame(ui, hovered, unfolded)
     }
 
     fn card(

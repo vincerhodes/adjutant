@@ -83,6 +83,23 @@ pub fn accent_of(ui: &Ui) -> Color32 {
     ui.visuals().selection.stroke.color
 }
 
+/// The shared folded/unfolded card surface (todos, email threads, outbox…):
+/// palette fill, 10/12 radius, conditional shadow + hairline border (§8).
+pub fn card_frame(ui: &Ui, hovered: bool, unfolded: bool) -> egui::Frame {
+    let p = theme::palette(ui);
+    let mut frame = egui::Frame::new()
+        .fill(if hovered { p.card_hover } else { p.card_fill })
+        .corner_radius(egui::CornerRadius::same(if unfolded { 12 } else { 10 }))
+        .inner_margin(egui::Margin::symmetric(16, 10));
+    if let Some(shadow) = theme::card_shadow(&p, hovered) {
+        frame = frame.shadow(shadow);
+    }
+    if theme::shows_card_border(&p) {
+        frame = frame.stroke(Stroke::new(1.0, p.border));
+    }
+    frame
+}
+
 /// Stroke an underline under a focused text field (accent, 1px).
 pub fn focused_underline(ui: &Ui, response: &Response) {
     if response.has_focus() {
