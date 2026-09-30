@@ -14,7 +14,7 @@ fn fresh_db_has_all_tables_and_user_versions() {
         .conn()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 
     let tables: Vec<String> = {
         let mut stmt = db
@@ -45,7 +45,7 @@ fn migrations_are_idempotent() {
         .conn()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn file_and_dir_permissions_are_restrictive() {
         .conn()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 
     drop(db);
     let _ = std::fs::remove_dir_all(&root);
