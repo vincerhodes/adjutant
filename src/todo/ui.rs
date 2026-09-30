@@ -24,7 +24,7 @@ const CHILD_INDENT_PX: f32 = 24.0;
 /// Visual indent caps at this depth; structure stays unbounded.
 const MAX_VISUAL_DEPTH: usize = 8;
 /// Gap between cards.
-const CARD_GAP_PX: f32 = 8.0;
+const CARD_GAP_PX: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -675,17 +675,19 @@ impl TodoUi {
 
     // ── cards ─────────────────────────────────────────────────────────────
 
-    fn card_frame(&self, ui: &Ui, hovered: bool) -> egui::Frame {
+    fn card_frame(&self, ui: &Ui, hovered: bool, unfolded: bool) -> egui::Frame {
         let p = theme::palette(ui);
-        egui::Frame::new()
+        let mut frame = egui::Frame::new()
             .fill(if hovered { p.card_hover } else { p.card_fill })
-            .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::symmetric(12, 6))
-            .stroke(if theme::card_needs_border(&p) {
-                Stroke::new(1.0, p.border)
-            } else {
-                Stroke::NONE
-            })
+            .corner_radius(egui::CornerRadius::same(if unfolded { 12 } else { 10 }))
+            .inner_margin(egui::Margin::symmetric(16, 10));
+        if let Some(shadow) = theme::card_shadow(&p, hovered) {
+            frame = frame.shadow(shadow);
+        }
+        if theme::shows_card_border(&p) {
+            frame = frame.stroke(Stroke::new(1.0, p.border));
+        }
+        frame
     }
 
     fn card(
@@ -724,10 +726,10 @@ impl TodoUi {
         let prev_rect = ui.ctx().data_mut(|d| d.get_temp::<egui::Rect>(card_id));
         let card_response = prev_rect.map(|rect| ui.interact(rect, card_id, egui::Sense::click()));
 
-        let frame = self.card_frame(ui, hovered);
+        let frame = self.card_frame(ui, hovered, unfolded);
         let frame_response = frame.show(ui, |ui| {
             if !unfolded {
-                ui.set_min_height(46.0 - 12.0);
+                ui.set_min_height(56.0 - 20.0);
             }
             let mut child_clicked = false;
             let mut badge_rects: Vec<egui::Rect> = Vec::new();
@@ -1391,9 +1393,9 @@ impl TodoUi {
         let items = self.trash.clone();
         for item in &items {
             ui.add_space(CARD_GAP_PX);
-            let frame = self.card_frame(ui, false);
+            let frame = self.card_frame(ui, false, false);
             let inner = frame.show(ui, |ui| {
-                ui.set_min_height(32.0 - 8.0);
+                ui.set_min_height(36.0 - 16.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&item.title).color(ui.visuals().weak_text_color()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

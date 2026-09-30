@@ -25,11 +25,17 @@ fn luma(c: egui::Color32) -> f32 {
 #[test]
 fn builtin_palettes_match_spec_table() {
     let light = Palette::light();
-    assert_eq!(light.background, theme::hex("#F7F6F2"));
-    assert_eq!(light.panel, theme::hex("#FFFFFF"));
-    assert_eq!(light.text, theme::hex("#1C1E21"));
-    assert_eq!(light.muted, theme::hex("#6E7278"));
-    assert_eq!(light.accent, theme::hex("#4C6EF5"));
+    // HEY-inspired values (spec §8).
+    assert_eq!(light.background, theme::hex("#F4F1EC"));
+    assert_eq!(light.card_fill, theme::hex("#FFFFFF"));
+    assert_eq!(light.text, theme::hex("#14171A"));
+    assert_eq!(light.muted, theme::hex("#8A8F98"));
+    assert_eq!(light.accent, theme::hex("#5B4BC4"));
+    assert_eq!(light.gold, theme::hex("#F2C94C"));
+    assert_eq!(light.success, theme::hex("#2FA46A"));
+    assert_eq!(light.warn, theme::hex("#E8A13D"));
+    assert_eq!(light.danger, theme::hex("#E4574C"));
+    assert_eq!(light.mint, theme::hex("#D9F4EA"));
     assert!(!light.dark);
 
     let sepia = Palette::sepia();
@@ -78,13 +84,22 @@ fn theme_choice_roundtrips_through_settings_name() {
 }
 
 #[test]
-fn card_border_only_when_fill_close_to_background() {
-    // Light and Sepia have near-white cards on off-white backgrounds.
+fn card_border_only_where_fill_close_to_background() {
+    // Light and Sepia have near-white cards on warm backgrounds: the luma
+    // rule still flags them, but the soft shadow replaces the hairline.
     assert!(theme::card_needs_border(&Palette::light()));
     assert!(theme::card_needs_border(&Palette::sepia()));
-    // Dark themes separate card from background by value.
+    assert!(theme::card_has_shadow(&Palette::light()));
+    assert!(theme::card_has_shadow(&Palette::sepia()));
+    assert!(!theme::shows_card_border(&Palette::light()));
+    assert!(!theme::shows_card_border(&Palette::sepia()));
+    // Dark themes separate card from background by value; no shadow, no
+    // border.
     assert!(!theme::card_needs_border(&Palette::slate()));
     assert!(!theme::card_needs_border(&Palette::dark()));
+    assert!(!theme::card_has_shadow(&Palette::dark()));
+    assert!(!theme::shows_card_border(&Palette::slate()));
+    assert!(!theme::shows_card_border(&Palette::dark()));
 }
 
 #[test]

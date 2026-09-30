@@ -32,6 +32,10 @@ pub struct Palette {
     pub success: Color32,
     pub warn: Color32,
     pub danger: Color32,
+    /// Gold: reserved for "new/attention" highlights (HEY pass §8).
+    pub gold: Color32,
+    /// Mint: positive-action pill tint (HEY pass §8).
+    pub mint: Color32,
     pub card_fill: Color32,
     pub card_hover: Color32,
     pub selection_fill: Color32,
@@ -83,20 +87,25 @@ impl ThemeChoice {
 
 impl Palette {
     pub fn light() -> Palette {
+        // HEY-inspired (spec §8): warm light grey app, white cards,
+        // near-black text, violet accent, gold reserved for attention.
         Palette {
             dark: false,
-            background: hex("#F7F6F2"),
+            background: hex("#F4F1EC"),
             panel: hex("#FFFFFF"),
-            text: hex("#1C1E21"),
-            muted: hex("#6E7278"),
-            accent: hex("#4C6EF5"),
-            border: hex("#E0DED6"),
-            success: hex("#2F9E44"),
-            warn: hex("#B45309"),
-            danger: hex("#DC2626"),
+            text: hex("#14171A"),
+            muted: hex("#8A8F98"),
+            accent: hex("#5B4BC4"),
+            border: hex("#E5E0D8"),
+            success: hex("#2FA46A"),
+            warn: hex("#E8A13D"),
+            danger: hex("#E4574C"),
+            gold: hex("#F2C94C"),
+            mint: hex("#D9F4EA"),
             card_fill: hex("#FFFFFF"),
-            card_hover: hex("#EFEDE6"),
-            selection_fill: hex("#E3E9FD"),
+            // Hover in light themes = shadow deepen, no fill change (§8).
+            card_hover: hex("#FFFFFF"),
+            selection_fill: hex("#E9E6F9"),
         }
     }
 
@@ -112,6 +121,8 @@ impl Palette {
             success: hex("#4C7A34"),
             warn: hex("#96660F"),
             danger: hex("#B3452E"),
+            gold: hex("#C99A2E"),
+            mint: hex("#DDE8D0"),
             card_fill: hex("#FAF5EA"),
             card_hover: hex("#EAE0CB"),
             selection_fill: hex("#EFE3CC"),
@@ -130,6 +141,8 @@ impl Palette {
             success: hex("#63B77C"),
             warn: hex("#E5B94E"),
             danger: hex("#E5645F"),
+            gold: hex("#E5C07B"),
+            mint: hex("#234236"),
             card_fill: hex("#3A4356"),
             card_hover: hex("#465064"),
             selection_fill: hex("#31405F"),
@@ -148,6 +161,8 @@ impl Palette {
             success: hex("#63B56F"),
             warn: hex("#E0B34C"),
             danger: hex("#E06C60"),
+            gold: hex("#E0B34C"),
+            mint: hex("#1E3A30"),
             card_fill: hex("#212830"),
             card_hover: hex("#2A323E"),
             selection_fill: hex("#22304A"),
@@ -201,6 +216,8 @@ impl Palette {
         p.card_fill = blend_toward(p.background, p.text, 0.10);
         p.card_hover = blend_toward(p.background, p.text, 0.16);
         p.border = with_alpha(p.text, 0.16);
+        // Omarchy carries no gold/mint of its own.
+        p.gold = p.warn;
         Some(p)
     }
 }
@@ -218,6 +235,32 @@ pub fn active_palette(choice: ThemeChoice, watcher: &ThemeWatcher) -> Palette {
 /// close to read (Light/Sepia); dark themes separate by value.
 pub fn card_needs_border(p: &Palette) -> bool {
     (luma(p.card_fill) - luma(p.background)).abs() < CARD_BORDER_LUMA_THRESHOLD
+}
+
+/// Light themes separate cards with a soft drop shadow instead of a border
+/// (HEY pass §8); dark themes use fill contrast only.
+pub fn card_has_shadow(p: &Palette) -> bool {
+    !p.dark
+}
+
+/// Effective border decision: shadow-carrying themes never also draw the
+/// hairline.
+pub fn shows_card_border(p: &Palette) -> bool {
+    card_needs_border(p) && !card_has_shadow(p)
+}
+
+/// Soft card drop shadow for light themes; `hovered` deepens it slightly
+/// (spec §8). Dark themes get none.
+pub fn card_shadow(p: &Palette, hovered: bool) -> Option<egui::Shadow> {
+    if !card_has_shadow(p) {
+        return None;
+    }
+    Some(egui::Shadow {
+        offset: [0, 1],
+        blur: if hovered { 12 } else { 8 },
+        spread: 0,
+        color: with_alpha(p.text, if hovered { 0.16 } else { 0.10 }),
+    })
 }
 
 /// Pick `text` or `background` — whichever reads better on `fill` (drives
