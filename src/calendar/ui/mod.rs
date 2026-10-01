@@ -58,6 +58,14 @@ pub struct CalendarUi {
     /// Event ids with the pointer over them (drives card_hover fill).
     hovered: HashSet<uuid::Uuid>,
     dirty: bool,
+    /// Week grid: first-frame scroll-to-08:00 done.
+    week_scrolled: bool,
+    /// Week grid content origin in ctx coordinates (test seam).
+    week_origin: Option<egui::Pos2>,
+    /// Week grid column width (test seam, set when the grid renders).
+    week_col_w: f32,
+    /// Live drag-to-create state (grid-local).
+    week_drag: Option<week::WeekDrag>,
 }
 
 impl CalendarUi {
@@ -73,6 +81,10 @@ impl CalendarUi {
             form: None,
             hovered: HashSet::new(),
             dirty: true,
+            week_scrolled: false,
+            week_origin: None,
+            week_col_w: 0.0,
+            week_drag: None,
         };
         state.reload(db);
         state
@@ -84,7 +96,19 @@ impl CalendarUi {
     }
 
     pub fn open_new_event(&mut self) {
-        self.form = Some(event_form::EventForm::new(None, None));
+        self.form = Some(event_form::EventForm::new(None, None, None));
+    }
+
+    /// Week grid content origin in ctx coordinates (kittest seam for
+    /// click-at-time assertions). Valid only right after the Week or
+    /// Dashboard view rendered.
+    pub fn week_origin(&self) -> Option<egui::Pos2> {
+        self.week_origin
+    }
+
+    /// Week grid column width from the last render (kittest seam).
+    pub fn week_col_w(&self) -> f32 {
+        self.week_col_w
     }
 
     /// Open the form on an event. `occurrence` carries the clicked
@@ -127,12 +151,36 @@ impl CalendarUi {
                     if ui::primary_button(ui, "New event").clicked() {
                         self.open_new_event();
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
                     for view in CalendarView::ALL {
                         if ui::selectable(ui, self.view == view, view.label()).clicked() {
                             self.view = view;
                         }
                     }
+                    ui.add_space(12.0);
+                    // Week navigation (shared header; view-aware stepping —
+                    // Month lands in Phase 3).
+                    if ui::icon_button(ui, icons::Icon::ChevronRight, "Next week", "next-week")
+                        .clicked()
+                    {
+                        self.week_anchor += Duration::days(7);
+                        self.dirty = true;
+                    }
+                    if ui::ghost_button(ui, "Today").clicked() {
+                        self.week_anchor = Utc::now();
+                        self.dirty = true;
+                    }
+                    if ui::icon_button(ui, icons::Icon::ChevronLeft, "Previous week", "prev-week")
+                        .clicked()
+                    {
+                        self.week_anchor -= Duration::days(7);
+                        self.dirty = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(period_label(self.week_anchor))
+                            .strong()
+                            .size(ui::fonts::SIZE_BODY),
+                    );
                 });
             });
             ui.add_space(4.0);
@@ -158,6 +206,10 @@ impl CalendarUi {
             if i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight) {
                 let delta = if i.key_pressed(Key::ArrowLeft) { -7 } else { 7 };
                 self.week_anchor += Duration::days(delta);
+                self.dirty = true;
+            }
+            if i.key_pressed(Key::T) {
+                self.week_anchor = Utc::now();
                 self.dirty = true;
             }
         });
@@ -326,4 +378,20 @@ pub fn occurrence_card(
         egui::Sense::click(),
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// "29 Sep – 5 Oct" for the week containing `anchor` (local dates).
+fn period_label(anchor: DateTime<Utc>) -> String {
+    let (start, end) = week_bounds(anchor);
+    let start_local = (start + Duration::seconds(1))
+        .with_timezone(&Local)
+        .date_naive();
+    let end_local = (end - Duration::seconds(1))
+        .with_timezone(&Local)
+        .date_naive();
+    format!(
+        "{} – {}",
+        start_local.format("%d %b"),
+        end_local.format("%d %b")
+    )
 }

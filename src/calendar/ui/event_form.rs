@@ -9,7 +9,7 @@
 
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc, Weekday};
+use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use egui::{Context, Key, RichText, Ui};
 use uuid::Uuid;
@@ -83,14 +83,30 @@ pub struct EventForm {
 }
 
 impl EventForm {
-    pub fn new(preset_date: Option<NaiveDate>, default_tz: Option<String>) -> EventForm {
+    pub fn new(
+        preset_date: Option<NaiveDate>,
+        preset_start: Option<NaiveTime>,
+        preset_end: Option<NaiveTime>,
+    ) -> EventForm {
         let today = chrono::Local::now().date_naive();
         let mut form = EventForm::skeleton();
         form.start_date = preset_date.unwrap_or(today).to_string();
         form.end_date = form.start_date.clone();
-        form.tz = default_tz.unwrap_or_else(system_tz_name);
+        form.tz = system_tz_name();
         form.reminders = vec!["10".to_string()];
+        if let Some(start) = preset_start {
+            form.start_time = start.format("%H:%M").to_string();
+            let end = preset_end.unwrap_or_else(|| plus_minutes_clamped(start, 60));
+            form.end_time = end.format("%H:%M").to_string();
+        }
         form
+    }
+
+    /// All-day preset (week-grid all-day band click).
+    pub fn preset_all_day(&mut self, date: NaiveDate) {
+        self.all_day = true;
+        self.start_date = date.to_string();
+        self.end_date = date.to_string();
     }
 
     pub fn edit(event: &Event, occurrence: Option<(&Occurrence, DateTime<Utc>)>) -> EventForm {
@@ -1004,6 +1020,17 @@ fn rsvp_label(rsvp: Rsvp) -> &'static str {
         Rsvp::Accepted => "Accepted",
         Rsvp::Declined => "Declined",
         Rsvp::Tentative => "Tentative",
+    }
+}
+
+/// Add minutes to a wall-clock time, clamping to 23:59 when the result
+/// would reach/past midnight (the form's same-day limit stands).
+fn plus_minutes_clamped(t: NaiveTime, minutes: i64) -> NaiveTime {
+    let total = i64::from(t.hour() * 60 + t.minute()) + minutes;
+    if total >= 24 * 60 {
+        NaiveTime::from_hms_opt(23, 59, 0).unwrap_or(t)
+    } else {
+        NaiveTime::from_hms_opt((total / 60) as u32, (total % 60) as u32, 0).unwrap_or(t)
     }
 }
 

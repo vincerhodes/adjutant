@@ -102,14 +102,11 @@ fn view_switcher_routes_dashboard_week_upcoming() {
     assert_eq!(h.query_all_by_label_contains("Alpha standup").count(), 1);
     assert_eq!(h.query_all_by_label_contains("Gamma offsite").count(), 1);
 
-    // Week view: weekday headers render (event blocks are painter-drawn).
+    // Week view: the grid widget is live (headers/blocks are painter-drawn
+    // and kittest-invisible by design).
     h.get_by_label("Week").click();
     h.run_steps(3);
-    let weekday_headers = ["Mon ", "Tue ", "Wed ", "Thu ", "Fri "]
-        .iter()
-        .map(|d| h.query_all_by_label_contains(d).count())
-        .sum::<usize>();
-    assert!(weekday_headers >= 5, "weekday column headers visible");
+    assert_eq!(h.query_all_by_label("Week grid").count(), 1);
 
     // Upcoming view lists every upcoming event as a card.
     h.get_by_label("Upcoming").click();
@@ -463,4 +460,210 @@ fn todo_link_picker_gains_event_entries() {
         .unwrap();
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].source.kind, EntityType::Todo);
+}
+
+// ── Phase 2: week grid interactions ────────────────────────────────────────
+
+const GUTTER_W: f32 = 44.0;
+const HOUR_H: f32 = 48.0;
+
+fn empty_fixture(name: &str) -> PathBuf {
+    let path = temp_db_path(name);
+    let db = Db::open(&path).unwrap();
+    drop(db);
+    path
+}
+
+fn expected_week_label(anchor: chrono::DateTime<chrono::Utc>) -> String {
+    use chrono::Datelike;
+    let local = anchor.with_timezone(&chrono::Local);
+    let date = local.date_naive();
+    let monday = date - chrono::Duration::days(date.weekday().num_days_from_monday() as i64);
+    let sunday = monday + chrono::Duration::days(6);
+    format!("{} – {}", monday.format("%d %b"), sunday.format("%d %b"))
+}
+
+#[test]
+fn week_nav_steps_period_label_and_today_resets() {
+    let path = empty_fixture("week-nav");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+
+    let initial = expected_week_label(chrono::Utc::now());
+    assert_eq!(h.query_all_by_label(&initial).count(), 1);
+
+    h.get_by_label_contains("Next week (icon button)").click();
+    h.run_steps(3);
+    let next = expected_week_label(chrono::Utc::now() + chrono::Duration::weeks(1));
+    assert_eq!(h.query_all_by_label(&next).count(), 1, "‹/› steps the week");
+
+    h.get_by_label("Today").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.query_all_by_label(&initial).count(),
+        1,
+        "Today resets the anchor"
+    );
+
+    h.get_by_label_contains("Previous week (icon button)")
+        .click();
+    h.run_steps(3);
+    let prev = expected_week_label(chrono::Utc::now() - chrono::Duration::weeks(1));
+    assert_eq!(h.query_all_by_label(&prev).count(), 1);
+
+    h.key_press(egui::Key::T);
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label(&initial).count(), 1, "T = today");
+}
+
+#[test]
+fn click_at_time_prefills_form_slot() {
+    let path = empty_fixture("click-slot");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Week").click();
+    h.run_steps(4);
+
+    // Grid geometry from the app (content origin + column width).
+    let origin = h.state().calendar().week_origin().expect("grid rendered");
+    let col_w = h.state().calendar().week_col_w();
+    // Click column 3 at 12:30 (grid-local y = 12.5 * HOUR_H).
+    let pos = egui::pos2(origin.x + GUTTER_W + col_w * 2.5, origin.y + 12.5 * HOUR_H);
+    h.drag_at(pos);
+    h.run_steps(1);
+    h.drop_at(pos);
+    h.run_steps(2);
+
+    // Form opens prefilled: start 12:30, end 13:30 (start + 60 min).
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    assert!(inputs.len() >= 5, "form open: {}", inputs.len());
+    assert_eq!(inputs[3].value().as_deref(), Some("12:30"), "start slot");
+    assert_eq!(
+        inputs[4].value().as_deref(),
+        Some("13:30"),
+        "end = start+60"
+    );
+}
+
+#[test]
+fn drag_create_prefills_range() {
+    let path = empty_fixture("drag-range");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Week").click();
+    h.run_steps(4);
+
+    let origin = h.state().calendar().week_origin().expect("grid rendered");
+    let col_w = h.state().calendar().week_col_w();
+    let x = origin.x + GUTTER_W + col_w * 3.5;
+    // Drag 09:15 → 11:45 within one column: slots snap to 09:00–12:00.
+    let start = egui::pos2(x, origin.y + 9.25 * HOUR_H);
+    let end = egui::pos2(x, origin.y + 11.75 * HOUR_H);
+    h.drag_at(start);
+    h.run_steps(1);
+    h.hover_at(end);
+    h.run_steps(2);
+    h.drop_at(end);
+    h.run_steps(2);
+
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    assert!(inputs.len() >= 5, "form open: {}", inputs.len());
+    assert_eq!(
+        inputs[3].value().as_deref(),
+        Some("09:00"),
+        "drag start slot"
+    );
+    assert_eq!(
+        inputs[4].value().as_deref(),
+        Some("12:00"),
+        "drag end slot +30"
+    );
+}
+
+#[test]
+fn short_drag_falls_back_to_click_slot() {
+    let path = empty_fixture("short-drag");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Week").click();
+    h.run_steps(4);
+
+    let origin = h.state().calendar().week_origin().expect("grid rendered");
+    let col_w = h.state().calendar().week_col_w();
+    let x = origin.x + GUTTER_W + col_w * 1.5;
+    // Tiny nudge (< 15 min) from 15:00 → treat as a click at 15:00.
+    let start = egui::pos2(x, origin.y + 15.1 * HOUR_H);
+    let end = egui::pos2(x, origin.y + 15.2 * HOUR_H);
+    h.drag_at(start);
+    h.run_steps(1);
+    h.hover_at(end);
+    h.run_steps(2);
+    h.drop_at(end);
+    h.run_steps(2);
+
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    assert_eq!(
+        inputs[3].value().as_deref(),
+        Some("15:00"),
+        "click fallback"
+    );
+    assert_eq!(
+        inputs[4].value().as_deref(),
+        Some("16:00"),
+        "end = start+60"
+    );
+}
+
+#[test]
+fn all_day_band_click_presets_all_day_form() {
+    let path = empty_fixture("allday-band");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Week").click();
+    h.run_steps(4);
+
+    let band = h
+        .query_all_by_label("All-day band")
+        .next()
+        .expect("all-day band widget");
+    let rect = band.rect();
+    let col_w = (rect.width() - GUTTER_W) / 7.0;
+    let click = egui::pos2(rect.left() + GUTTER_W + col_w * 2.5, rect.center().y);
+    h.drag_at(click);
+    h.run_steps(1);
+    h.drop_at(click);
+    h.run_steps(2);
+
+    // Save the preset form and assert the created event is all-day on the
+    // clicked date (column 3 of the current week).
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    inputs[0].focus();
+    h.run_steps(1);
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    inputs[0].type_text("Band day");
+    h.run_steps(1);
+    h.get_by_label("Save").click();
+    h.run_steps(3);
+
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    let events = store
+        .events_in_window(
+            chrono::Utc::now() - chrono::Duration::days(1),
+            chrono::Utc::now() + chrono::Duration::days(14),
+        )
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].all_day, "band click creates an all-day event");
+    assert_eq!(events[0].title, "Band day");
 }

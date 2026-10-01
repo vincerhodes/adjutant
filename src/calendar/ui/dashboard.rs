@@ -11,11 +11,10 @@ use crate::ui::icons;
 use super::{occurrence_card, occurrence_day_label, occurrence_time_label, CalendarUi};
 
 pub fn show(calendar: &mut CalendarUi, ui: &mut Ui, db: &Db) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        upcoming_strip(calendar, ui, db);
-        ui.add_space(10.0);
-        super::week::show(calendar, ui, db);
-    });
+    // Upcoming-5 strip stays pinned; the week grid scrolls beneath it.
+    upcoming_strip(calendar, ui, db);
+    ui.add_space(10.0);
+    super::week::show(calendar, ui, db);
 }
 
 fn upcoming_strip(calendar: &mut CalendarUi, ui: &mut Ui, db: &Db) {

@@ -24,6 +24,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+.", "Focus mode — full-window list"),
     ("Ctrl+N (calendar)", "New event"),
     ("← / → (calendar)", "Previous / next week"),
+    ("T (calendar)", "Jump to today"),
     ("Esc (calendar)", "Close the event form"),
     ("Ctrl+= / Ctrl+- / Ctrl+0", "Zoom in / out / reset"),
     ("F1", "This overlay"),

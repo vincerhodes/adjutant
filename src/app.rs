@@ -172,6 +172,11 @@ impl AdjutantApp {
         &mut self.scratch
     }
 
+    /// Calendar UI — exposed for tests (week-grid geometry seam).
+    pub fn calendar(&self) -> &crate::calendar::ui::CalendarUi {
+        &self.calendar
+    }
+
     fn handle_global_keys(&mut self, ctx: &Context) {
         ctx.input(|i| {
             if i.key_pressed(Key::F1) {
