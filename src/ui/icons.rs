@@ -23,6 +23,7 @@ pub enum Icon {
     Branch,
     CircleSlash,
     Paperclip,
+    Calendar,
     ChevronLeft,
     ChevronRight,
     Back,
@@ -32,7 +33,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Icon; 15] = [
+    pub const ALL: [Icon; 16] = [
         Icon::CircleOutline,
         Icon::CircleHalf,
         Icon::Check,
@@ -42,6 +43,7 @@ impl Icon {
         Icon::Branch,
         Icon::CircleSlash,
         Icon::Paperclip,
+        Icon::Calendar,
         Icon::ChevronLeft,
         Icon::ChevronRight,
         Icon::Back,
@@ -181,6 +183,24 @@ impl Icon {
                 let cut = inner_open.len() / 8;
                 inner_open.drain(0..cut);
                 painter.add(Shape::line(inner_open, stroke));
+            }
+            Icon::Calendar => {
+                // Rounded page with two binding rings and a header rule.
+                let page = egui::Rect::from_center_size(
+                    c + egui::vec2(0.0, r * 0.15),
+                    egui::vec2(r * 1.5, r * 1.3),
+                );
+                painter.rect_stroke(
+                    page,
+                    egui::CornerRadius::same((r * 0.3).round() as u8),
+                    stroke,
+                    egui::StrokeKind::Inside,
+                );
+                let ring = Stroke::new(w * 1.2, color);
+                painter.line_segment([pos(c, -0.35, -1.05, r), pos(c, -0.35, -0.55, r)], ring);
+                painter.line_segment([pos(c, 0.35, -1.05, r), pos(c, 0.35, -0.55, r)], ring);
+                let rule_y = page.top() + page.height() * 0.32;
+                painter.hline((page.left() + w)..=(page.right() - w), rule_y, stroke);
             }
         }
     }

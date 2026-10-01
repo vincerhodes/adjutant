@@ -2,6 +2,7 @@
 //! one primary + one ghost button style, priority dots (no badges),
 //! borderless-until-focus inputs, designed empty states.
 
+pub mod date_picker;
 pub mod fonts;
 pub mod help;
 pub mod icons;
