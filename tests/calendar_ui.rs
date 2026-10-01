@@ -667,3 +667,141 @@ fn all_day_band_click_presets_all_day_form() {
     assert!(events[0].all_day, "band click creates an all-day event");
     assert_eq!(events[0].title, "Band day");
 }
+
+// ── Phase 3: month view + view persistence ────────────────────────────────
+
+#[test]
+fn month_view_renders_day_numbers_with_adjacent_days() {
+    let path = empty_fixture("month-days");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Month").click();
+    h.run_steps(3);
+
+    // Day-of-week headers + day numbers are real labels.
+    for wd in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        assert_eq!(h.query_all_by_label(wd).count(), 1, "header {wd}");
+    }
+    // The 1st of the anchor month and some high day number (28/30/31 —
+    // every month has one) are visible.
+    // The 1st of the anchor month (a trailing next-month "1" may also
+    // appear in the 6-row grid — that IS the adjacent-day spillover).
+    assert!(h.query_all_by_label("1").count() >= 1, "the 1st is visible");
+    let high_days = ["28", "30", "31"]
+        .iter()
+        .map(|d| h.query_all_by_label(d).count())
+        .sum::<usize>();
+    assert!(high_days >= 1, "current-month high day numbers visible");
+    // Adjacent-month days: the grid always shows leading days from the
+    // previous month and/or trailing days from the next — count every
+    // numeric label; a bare month (Mon=1st, 28 days, no spill) is
+    // impossible in a Monday-first 6-row grid.
+    let numeric_labels: usize = (1..=31)
+        .map(|d| h.query_all_by_label(&d.to_string()).count())
+        .sum();
+    assert!(numeric_labels > 31, "adjacent-month days fill the 6x7 grid");
+}
+
+#[test]
+fn month_nav_steps_period_label_by_month() {
+    let path = empty_fixture("month-nav");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Month").click();
+    h.run_steps(3);
+
+    let this_month = chrono::Local::now().format("%B %Y").to_string();
+    assert_eq!(h.query_all_by_label(&this_month).count(), 1);
+
+    h.get_by_label_contains("Next month (icon button)").click();
+    h.run_steps(3);
+    let next_month = (chrono::Local::now() + chrono::Duration::days(32))
+        .format("%B %Y")
+        .to_string();
+    assert_eq!(
+        h.query_all_by_label(&next_month).count(),
+        1,
+        "‹/› steps by a month"
+    );
+
+    h.get_by_label("Today").click();
+    h.run_steps(3);
+    assert_eq!(
+        h.query_all_by_label(&this_month).count(),
+        1,
+        "Today returns to the current month"
+    );
+}
+
+#[test]
+fn month_cell_click_drills_into_that_week() {
+    let path = empty_fixture("month-drill");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Month").click();
+    h.run_steps(3);
+
+    // Click the "15" day-number node: the plain Label doesn't consume
+    // clicks, so the cell interact underneath receives it.
+    let fifteen = h
+        .query_all_by_label("15")
+        .next()
+        .expect("day 15 in the current month");
+    // Raw press/release at the label's position: the Label node itself
+    // holds no pointer sense, so the cell interact underneath must take it.
+    let pos = fifteen.rect().center();
+    h.drag_at(pos);
+    h.run_steps(1);
+    h.drop_at(pos);
+    h.run_steps(3);
+
+    // Week view opens, anchored on the week containing the 15th.
+    assert_eq!(h.query_all_by_label("Week grid").count(), 1);
+    use chrono::Datelike;
+    let today = chrono::Local::now().date_naive();
+    let month_15 = today.with_day(15).unwrap_or(today);
+    let monday =
+        month_15 - chrono::Duration::days(month_15.weekday().num_days_from_monday() as i64);
+    let sunday = monday + chrono::Duration::days(6);
+    let expected = format!("{} – {}", monday.format("%d %b"), sunday.format("%d %b"));
+    assert_eq!(h.query_all_by_label(&expected).count(), 1);
+}
+
+#[test]
+fn calendar_view_persists_across_relaunch() {
+    let path = empty_fixture("view-persist");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("Month").click();
+    h.run_steps(3);
+
+    // UI → settings table.
+    let db = Db::open(&path).unwrap();
+    let saved: Option<String> = db.get_setting("calendar_view").unwrap();
+    assert_eq!(saved.as_deref(), Some("month"));
+    drop(db);
+    drop(h);
+
+    // Fresh boot restores the persisted view.
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    let this_month = chrono::Local::now().format("%B %Y").to_string();
+    assert_eq!(
+        h.query_all_by_label(&this_month).count(),
+        1,
+        "Month view restored from settings"
+    );
+
+    // Unknown values fall back to Dashboard.
+    let db = Db::open(&path).unwrap();
+    db.set_setting("calendar_view", &"bogus").unwrap();
+    drop(db);
+    drop(h);
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    assert_eq!(
+        h.query_all_by_label_contains("Nothing scheduled").count(),
+        1,
+        "unknown view value falls back to Dashboard"
+    );
+}

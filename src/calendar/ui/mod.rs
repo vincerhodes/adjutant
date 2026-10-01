@@ -5,6 +5,7 @@
 
 pub mod dashboard;
 pub mod event_form;
+pub mod month;
 pub mod reminder_banner;
 pub mod upcoming;
 pub mod week;
@@ -24,13 +25,15 @@ use super::CalendarStore;
 pub enum CalendarView {
     Dashboard,
     Week,
+    Month,
     Upcoming,
 }
 
 impl CalendarView {
-    const ALL: [CalendarView; 3] = [
+    const ALL: [CalendarView; 4] = [
         CalendarView::Dashboard,
         CalendarView::Week,
+        CalendarView::Month,
         CalendarView::Upcoming,
     ];
 
@@ -38,10 +41,33 @@ impl CalendarView {
         match self {
             CalendarView::Dashboard => "Dashboard",
             CalendarView::Week => "Week",
+            CalendarView::Month => "Month",
             CalendarView::Upcoming => "Upcoming",
         }
     }
+
+    fn name(&self) -> &'static str {
+        match self {
+            CalendarView::Dashboard => "dashboard",
+            CalendarView::Week => "week",
+            CalendarView::Month => "month",
+            CalendarView::Upcoming => "upcoming",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<CalendarView> {
+        match name {
+            "dashboard" => Some(CalendarView::Dashboard),
+            "week" => Some(CalendarView::Week),
+            "month" => Some(CalendarView::Month),
+            "upcoming" => Some(CalendarView::Upcoming),
+            _ => None,
+        }
+    }
 }
+
+/// Settings key for the persisted calendar view (theme picker pattern).
+const SETTINGS_CALENDAR_VIEW: &str = "calendar_view";
 
 /// Shared view state: cached base rows + banner items, refreshed when
 /// `dirty` (or every minute, so the now-line and upcoming strip advance).
@@ -66,12 +92,19 @@ pub struct CalendarUi {
     week_col_w: f32,
     /// Live drag-to-create state (grid-local).
     week_drag: Option<week::WeekDrag>,
+    /// Month cell drill-down click, applied after rendering (needs db).
+    month_drill: Option<NaiveDate>,
 }
 
 impl CalendarUi {
     pub fn new(db: &Db) -> CalendarUi {
+        let persisted = db
+            .get_setting::<String>(SETTINGS_CALENDAR_VIEW)
+            .ok()
+            .flatten()
+            .and_then(|name| CalendarView::from_name(&name));
         let mut state = CalendarUi {
-            view: CalendarView::Dashboard,
+            view: persisted.unwrap_or(CalendarView::Dashboard),
             week_anchor: Utc::now(),
             events: Vec::new(),
             upcoming: Vec::new(),
@@ -85,9 +118,25 @@ impl CalendarUi {
             week_origin: None,
             week_col_w: 0.0,
             week_drag: None,
+            month_drill: None,
         };
         state.reload(db);
         state
+    }
+
+    /// Switch view and persist the choice (settings table).
+    fn set_view(&mut self, db: &Db, view: CalendarView) {
+        if self.view != view {
+            self.view = view;
+            self.dirty = true;
+            let _ = db.set_setting(SETTINGS_CALENDAR_VIEW, &view.name());
+        }
+    }
+
+    /// Month drill-down: switch to the week containing `date`.
+    pub(crate) fn drill_to_week(&mut self, db: &Db, date: NaiveDate) {
+        self.week_anchor = day_start_utc(date) + Duration::hours(12);
+        self.set_view(db, CalendarView::Week);
     }
 
     /// True while a modal-ish surface owns Esc (mirrors email `is_busy`).
@@ -154,30 +203,47 @@ impl CalendarUi {
                     ui.add_space(12.0);
                     for view in CalendarView::ALL {
                         if ui::selectable(ui, self.view == view, view.label()).clicked() {
-                            self.view = view;
+                            self.set_view(db, view);
                         }
                     }
                     ui.add_space(12.0);
-                    // Week navigation (shared header; view-aware stepping —
-                    // Month lands in Phase 3).
-                    if ui::icon_button(ui, icons::Icon::ChevronRight, "Next week", "next-week")
-                        .clicked()
+                    // Period navigation — view-aware: Month steps whole
+                    // months, Week/Dashboard step 7 days.
+                    let month_mode = self.view == CalendarView::Month;
+                    if ui::icon_button(
+                        ui,
+                        icons::Icon::ChevronRight,
+                        if month_mode {
+                            "Next month"
+                        } else {
+                            "Next week"
+                        },
+                        "next-week",
+                    )
+                    .clicked()
                     {
-                        self.week_anchor += Duration::days(7);
-                        self.dirty = true;
+                        self.step_nav(1);
                     }
                     if ui::ghost_button(ui, "Today").clicked() {
                         self.week_anchor = Utc::now();
                         self.dirty = true;
                     }
-                    if ui::icon_button(ui, icons::Icon::ChevronLeft, "Previous week", "prev-week")
-                        .clicked()
+                    if ui::icon_button(
+                        ui,
+                        icons::Icon::ChevronLeft,
+                        if month_mode {
+                            "Previous month"
+                        } else {
+                            "Previous week"
+                        },
+                        "prev-week",
+                    )
+                    .clicked()
                     {
-                        self.week_anchor -= Duration::days(7);
-                        self.dirty = true;
+                        self.step_nav(-1);
                     }
                     ui.label(
-                        egui::RichText::new(period_label(self.week_anchor))
+                        egui::RichText::new(period_label(self.view, self.week_anchor))
                             .strong()
                             .size(ui::fonts::SIZE_BODY),
                     );
@@ -190,9 +256,27 @@ impl CalendarUi {
             match self.view {
                 CalendarView::Dashboard => dashboard::show(self, ui, db),
                 CalendarView::Week => week::show(self, ui, db),
+                CalendarView::Month => month::show(self, ui, db),
                 CalendarView::Upcoming => upcoming::show(self, ui, db),
             }
         });
+    }
+
+    /// ‹/› stepping — view-aware: Month steps whole months (day-clamped),
+    /// Week/Dashboard step 7 days.
+    fn step_nav(&mut self, direction: i64) {
+        self.step_nav_from_key(direction);
+    }
+
+    fn step_nav_from_key(&mut self, direction: i64) {
+        if self.view == CalendarView::Month {
+            let date = self.week_anchor.with_timezone(&Local).date_naive();
+            let shifted = shift_months(date, direction);
+            self.week_anchor = day_start_utc(shifted) + Duration::hours(12);
+        } else {
+            self.week_anchor += Duration::days(7 * direction);
+        }
+        self.dirty = true;
     }
 
     fn handle_keys(&mut self, ctx: &Context) {
@@ -204,9 +288,8 @@ impl CalendarUi {
                 self.open_new_event();
             }
             if i.key_pressed(Key::ArrowLeft) || i.key_pressed(Key::ArrowRight) {
-                let delta = if i.key_pressed(Key::ArrowLeft) { -7 } else { 7 };
-                self.week_anchor += Duration::days(delta);
-                self.dirty = true;
+                let dir = if i.key_pressed(Key::ArrowLeft) { -1 } else { 1 };
+                self.step_nav_from_key(dir);
             }
             if i.key_pressed(Key::T) {
                 self.week_anchor = Utc::now();
@@ -225,7 +308,12 @@ impl CalendarUi {
         self.loaded_minute = minute;
         self.now = now;
         let store = CalendarStore::new(db);
-        let (week_start, week_end) = week_bounds(self.week_anchor);
+        let (week_start, week_end) = if self.view == CalendarView::Month {
+            let (start, monday, _) = month_bounds(self.week_anchor);
+            (start, day_start_utc(monday + Duration::days(42)))
+        } else {
+            week_bounds(self.week_anchor)
+        };
         self.events = store
             .events_in_window(week_start, week_end)
             .unwrap_or_default();
@@ -381,7 +469,10 @@ pub fn occurrence_card(
 }
 
 /// "29 Sep – 5 Oct" for the week containing `anchor` (local dates).
-fn period_label(anchor: DateTime<Utc>) -> String {
+fn period_label(view: CalendarView, anchor: DateTime<Utc>) -> String {
+    if view == CalendarView::Month {
+        return anchor.with_timezone(&Local).format("%B %Y").to_string();
+    }
     let (start, end) = week_bounds(anchor);
     let start_local = (start + Duration::seconds(1))
         .with_timezone(&Local)
@@ -394,4 +485,35 @@ fn period_label(anchor: DateTime<Utc>) -> String {
         start_local.format("%d %b"),
         end_local.format("%d %b")
     )
+}
+
+/// Month grid window: the Monday on/before the 1st of the anchor's month,
+/// plus 42 days. Returns (window_start_utc, grid_monday, month_first).
+pub fn month_bounds(anchor: DateTime<Utc>) -> (DateTime<Utc>, NaiveDate, NaiveDate) {
+    let local_date = anchor.with_timezone(&Local).date_naive();
+    let first = local_date.with_day(1).unwrap_or(local_date);
+    let monday = first - Duration::days(first.weekday().num_days_from_monday() as i64);
+    (day_start_utc(monday), monday, first)
+}
+
+/// Calendar month arithmetic with day clamping: Jan 31 − 1 month → Dec 31.
+fn shift_months(date: NaiveDate, months: i64) -> NaiveDate {
+    let total = i64::from(date.year()) * 12 + i64::from(date.month0()) + months;
+    let year = total.div_euclid(12).clamp(
+        i64::from(NaiveDate::MIN.year()),
+        i64::from(NaiveDate::MAX.year()),
+    );
+    let month0 = total.rem_euclid(12) as u32;
+    let day = date.day().min(days_in_month(year, month0));
+    NaiveDate::from_ymd_opt(year as i32, month0 + 1, day).unwrap_or(date)
+}
+
+fn days_in_month(year: i64, month0: u32) -> u32 {
+    const COMMON: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    if month0 == 1 && leap {
+        29
+    } else {
+        COMMON[month0 as usize]
+    }
 }
