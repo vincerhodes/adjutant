@@ -546,6 +546,7 @@ impl EventForm {
                     .hint_text("YYYY-MM-DD"),
             );
             ui::focused_underline(ui, &response);
+            crate::ui::date_picker::date_picker(ui, &mut self.until, "recurrence-until");
             if response.changed() {
                 self.until = u;
             }
@@ -672,26 +673,37 @@ impl EventForm {
     }
 
     fn date_field(&mut self, ui: &mut Ui, hint: &str, id: &str) {
-        let mut value = self.start_date.clone();
-        if hint == "End date" {
-            value = self.end_date.clone();
-        }
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut value)
-                .id(egui::Id::new(id))
-                .frame(egui::Frame::NONE)
-                .desired_width(96.0)
-                .hint_text(hint),
-        );
-        ui::focused_underline(ui, &response);
-        ui::hovered_underline(ui, &response);
-        if response.changed() {
-            if hint == "End date" {
-                self.end_date = value;
-            } else {
-                self.start_date = value;
+        let field_is_end = hint == "End date";
+        let mut value = if field_is_end {
+            self.end_date.clone()
+        } else {
+            self.start_date.clone()
+        };
+        ui.horizontal(|ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut value)
+                    .id(egui::Id::new(id))
+                    .frame(egui::Frame::NONE)
+                    .desired_width(96.0)
+                    .hint_text(hint),
+            );
+            ui::focused_underline(ui, &response);
+            ui::hovered_underline(ui, &response);
+            if response.changed() {
+                if field_is_end {
+                    self.end_date = value.clone();
+                } else {
+                    self.start_date = value.clone();
+                }
             }
-        }
+            // The picker binds the SAME String the form validates; write
+            // the TextEdit clone back BEFORE the picker may mutate it.
+            if field_is_end {
+                crate::ui::date_picker::date_picker(ui, &mut self.end_date, id);
+            } else {
+                crate::ui::date_picker::date_picker(ui, &mut self.start_date, id);
+            }
+        });
     }
 
     fn time_field(&mut self, ui: &mut Ui, hint: &str, id: &str) {

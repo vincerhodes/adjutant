@@ -877,3 +877,37 @@ fn store_retrash_and_purge_ui(
         "delete-forever removes the event"
     );
 }
+
+#[test]
+fn event_form_date_picker_sets_start_date() {
+    let path = empty_fixture("form-date-picker");
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    h.get_by_label("New event").click();
+    h.run_steps(3);
+
+    // The form's date field has exactly one picker toggle (recurrence is
+    // collapsed on a new event).
+    h.get_by_label_contains("Pick date (icon button)").click();
+    h.run_steps(2);
+    let this_month = chrono::Local::now().format("%B %Y").to_string();
+    assert_eq!(h.query_all_by_label(&this_month).count(), 1, "popup open");
+
+    h.get_by_label("18").click();
+    h.run_steps(2);
+
+    // Field index 2 = Date (Title, Location, Date, Start, End, Reminder).
+    let inputs: Vec<_> = h
+        .query_all_by_role(egui::accesskit::Role::TextInput)
+        .collect();
+    let value = inputs[2].value().unwrap_or_default();
+    assert!(
+        value.ends_with("-18"),
+        "picker wrote into the validated field, got {value:?}"
+    );
+    assert_eq!(
+        h.query_all_by_label(&this_month).count(),
+        0,
+        "popup closed after selection"
+    );
+}
