@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod event_form;
 pub mod month;
 pub mod reminder_banner;
+pub mod trash;
 pub mod upcoming;
 pub mod week;
 
@@ -94,6 +95,10 @@ pub struct CalendarUi {
     week_drag: Option<week::WeekDrag>,
     /// Month cell drill-down click, applied after rendering (needs db).
     month_drill: Option<NaiveDate>,
+    /// Trash panel open (replaces the main view).
+    trash_panel: bool,
+    trashed: Vec<Event>,
+    confirm_delete_event: Option<uuid::Uuid>,
 }
 
 impl CalendarUi {
@@ -119,6 +124,9 @@ impl CalendarUi {
             week_col_w: 0.0,
             week_drag: None,
             month_drill: None,
+            trash_panel: false,
+            trashed: Vec::new(),
+            confirm_delete_event: None,
         };
         state.reload(db);
         state
@@ -141,7 +149,7 @@ impl CalendarUi {
 
     /// True while a modal-ish surface owns Esc (mirrors email `is_busy`).
     pub fn is_busy(&self) -> bool {
-        self.form.is_some()
+        self.form.is_some() || self.confirm_delete_event.is_some()
     }
 
     pub fn open_new_event(&mut self) {
@@ -200,6 +208,10 @@ impl CalendarUi {
                     if ui::primary_button(ui, "New event").clicked() {
                         self.open_new_event();
                     }
+                    if ui::icon_button(ui, icons::Icon::Cross, "Trash", "trash-toggle").clicked() {
+                        self.trash_panel = !self.trash_panel;
+                        self.dirty = true;
+                    }
                     ui.add_space(12.0);
                     for view in CalendarView::ALL {
                         if ui::selectable(ui, self.view == view, view.label()).clicked() {
@@ -253,11 +265,15 @@ impl CalendarUi {
             reminder_banner::show(self, ui, db, toasts);
             ui.add_space(4.0);
 
-            match self.view {
-                CalendarView::Dashboard => dashboard::show(self, ui, db),
-                CalendarView::Week => week::show(self, ui, db),
-                CalendarView::Month => month::show(self, ui, db),
-                CalendarView::Upcoming => upcoming::show(self, ui, db),
+            if self.trash_panel {
+                trash::show(self, ui, ctx, db, toasts);
+            } else {
+                match self.view {
+                    CalendarView::Dashboard => dashboard::show(self, ui, db),
+                    CalendarView::Week => week::show(self, ui, db),
+                    CalendarView::Month => month::show(self, ui, db),
+                    CalendarView::Upcoming => upcoming::show(self, ui, db),
+                }
             }
         });
     }
@@ -296,6 +312,13 @@ impl CalendarUi {
                 self.dirty = true;
             }
         });
+        if self.confirm_delete_event.is_none()
+            && self.trash_panel
+            && ctx.input(|i| i.key_pressed(Key::Escape))
+        {
+            self.trash_panel = false;
+            self.dirty = true;
+        }
     }
 
     fn reload(&mut self, db: &Db) {
@@ -321,6 +344,11 @@ impl CalendarUi {
         self.due = store
             .banner_items(now, Duration::hours(24))
             .unwrap_or_default();
+        self.trashed = if self.trash_panel {
+            store.trashed_events().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
     }
 }
 

@@ -805,3 +805,75 @@ fn calendar_view_persists_across_relaunch() {
         "unknown view value falls back to Dashboard"
     );
 }
+
+#[test]
+fn trash_panel_lists_restores_and_deletes_forever() {
+    let path = temp_db_path("trash-panel");
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    let start = chrono::Utc::now() + chrono::Duration::days(2);
+    let event_id = store
+        .create_event(&EventInput {
+            start_utc: Some(start),
+            end_utc: Some(start + chrono::Duration::hours(1)),
+            ..base_input("Trashed event")
+        })
+        .unwrap();
+    store.trash_event(event_id).unwrap();
+    drop(db);
+
+    let mut h = boot(&path);
+    open_calendar(&mut h);
+    // Trash toggle in the header.
+    h.get_by_label_contains("Trash (icon button)").click();
+    h.run_steps(3);
+    assert_eq!(h.query_all_by_label_contains("Trashed event").count(), 1);
+
+    // Restore round-trips back to the live store.
+    h.get_by_label_contains("Restore (icon button)").click();
+    h.run_steps(3);
+    let db = Db::open(&path).unwrap();
+    let store = CalendarStore::new(&db);
+    let event = store.get_event(event_id).unwrap();
+    assert!(event.trashed_at.is_none());
+    assert_eq!(
+        store
+            .events_in_window(
+                chrono::Utc::now(),
+                chrono::Utc::now() + chrono::Duration::days(7)
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    drop(db);
+
+    // Trash again (via the panel: hover-reveal button on the card), then
+    // delete forever through the confirm modal.
+    store_retrash_and_purge_ui(&mut h, &path, event_id);
+}
+
+fn store_retrash_and_purge_ui(
+    h: &mut Harness<'static, AdjutantApp>,
+    path: &Path,
+    event_id: uuid::Uuid,
+) {
+    let db = Db::open(path).unwrap();
+    CalendarStore::new(&db).trash_event(event_id).unwrap();
+    drop(db);
+    // External trash doesn't dirty the UI — re-toggling the panel forces
+    // the reload that picks it up.
+    h.get_by_label_contains("Trash (icon button)").click();
+    h.run_steps(2);
+    h.get_by_label_contains("Trash (icon button)").click();
+    h.run_steps(3);
+    h.get_by_label_contains("Delete").click();
+    h.run_steps(2);
+    h.get_by_label("Delete forever").click();
+    h.run_steps(3);
+    let db = Db::open(path).unwrap();
+    assert!(
+        CalendarStore::new(&db).get_event(event_id).is_err(),
+        "delete-forever removes the event"
+    );
+}

@@ -533,6 +533,14 @@ impl<'a> CalendarStore<'a> {
             .ok_or_else(|| CalendarError::Corrupt("fire row vanished after upsert".into()))
     }
 
+    /// Trashed events, newest trash first — the calendar Trash panel.
+    pub fn trashed_events(&self) -> Result<Vec<Event>> {
+        let mut events = self.base_events("trashed_at IS NOT NULL", &[])?;
+        self.attach_relations(&mut events)?;
+        events.sort_by_key(|e| std::cmp::Reverse(e.trashed_at));
+        Ok(events)
+    }
+
     /// Title search over live events (link picker). Relations are not
     /// attached — the picker only needs id + title.
     pub fn search_events(&self, needle: &str, limit: usize) -> Result<Vec<Event>> {
