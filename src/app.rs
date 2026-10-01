@@ -177,6 +177,14 @@ impl AdjutantApp {
         &self.calendar
     }
 
+    /// Swap the desktop notifier — the test seam that keeps dbus out of
+    /// `cargo test` (AGENTS.md Notifier rule). Test harnesses must inject a
+    /// mock before the first frame, or the reminder scheduler leaks real
+    /// desktop notifications.
+    pub fn set_reminder_notifier(&mut self, notifier: Box<dyn Notifier>) {
+        self.reminder_notifier = notifier;
+    }
+
     fn handle_global_keys(&mut self, ctx: &Context) {
         ctx.input(|i| {
             if i.key_pressed(Key::F1) {

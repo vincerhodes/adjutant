@@ -83,7 +83,20 @@ fn boot(path: &Path) -> Harness<'static, AdjutantApp> {
     let db = Db::open(path).unwrap();
     Harness::builder()
         .with_size([1400.0, 900.0])
-        .build_eframe(move |cc| AdjutantApp::new_with_engine(db, cc, None))
+        .build_eframe(move |cc| {
+            let mut app = AdjutantApp::new_with_engine(db, cc, None);
+            // Notifier is the test seam (AGENTS.md): never dbus in cargo test.
+            app.set_reminder_notifier(Box::new(MockNotifier));
+            app
+        })
+}
+
+/// Records nothing, notifies nothing — exists only to keep the live
+/// `DesktopNotifier` (and its dbus connection) out of the test process.
+struct MockNotifier;
+
+impl adjutant::calendar::notify::Notifier for MockNotifier {
+    fn notify(&self, _title: &str, _body: &str) {}
 }
 
 fn open_calendar(h: &mut Harness<'static, AdjutantApp>) {
