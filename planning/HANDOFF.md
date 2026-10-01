@@ -23,6 +23,14 @@
   plain-text capture pads, 500ms-debounce autosave, pin/color/trash,
   todo-picker + email-pane link integration via the pre-existing
   `EntityType::Note` (no core change).
+- **M3.6 Calendar UX overhaul — DONE** on the same branch, four phases
+  (Jimmy's manual-test findings + explicit asks): Phase 1 `def360c`
+  (primary button explicit-paint + cursor audit), Phase 2 `ef6d0ea`
+  (week-grid rework: time gutter, one-scroll grid, 30-min hover slots,
+  click/drag-to-create, header period nav), Phase 3 `5c46625` (month view
+  + view persistence), Phase 4 (date picker widget, event trash panel,
+  spec/README updates — this commit). 171 tests at tip. The calendar spec
+  §7 is updated to the shipped interactions (normative truth).
 - **Branch NOT merged.** `m3-calendar` is stacked on main `961dd67`. PR
   needs Jimmy's explicit approval (see Open questions).
 
@@ -80,6 +88,16 @@ M3/M3.5 additions:
   validation error) — known limitation, pending Jimmy's call.
 - **Dashboard = upcoming-5 strip over week grid**; switcher
   Dashboard/Week/Upcoming; all-day band, now-line, past-dimmed.
+- **Calendar UX (M3.6)**: primary button is explicit-paint (visuals
+  mutation lost the fill under some themes); week grid uses ONE ScrollArea
+  and the pointer's `press_origin()` for drag anchors (`drag_started`
+  fires post-threshold with a displaced pointer); egui `scroll_to_rect`
+  is ANIMATED by default — the grid uses `ScrollAnimation::none()` or
+  test geometry races the easing; plain hover-sense Labels swallow
+  clicks in egui 0.36 hit-testing — day numbers/date-picker days are
+  `Label::sense(click())`; the mini date picker (`ui::date_picker`) is a
+  shared widget (todo due dates can adopt it); calendar view persists via
+  the `calendar_view` setting.
 - **Scratch pads: plain text, autosave 500ms idle debounce** (flushed on
   fold/Esc), Ctrl+N drafts and only creates the row on first keystroke;
   pinned-first + recency ordering; color = 6-dot cycle via one
@@ -161,6 +179,10 @@ variant + CHECK migration only if none fits).
     color-cycle click-through vs a picker; icon metaphors (Flag=pin,
     CircleHalf=color, Cross=trash, Back=restore); **mixed todo-picker
     result ordering** (todos + emails + events + pads in one list).
+  - M3.6: week-grid hover ghost + drag highlight legibility; click vs
+    drag-create feel (15-min threshold); month chip density and "+n more";
+    date-picker popup positioning; trash panel card layout; primary-button
+    hover/active tint in every theme.
 - **HTML subset renderer** — raw HTML stored, not rendered; parked.
 - **Visual polish backlog** — Jimmy parks visual work; one consolidation
   pass before M4.

@@ -186,12 +186,58 @@ Rules:
 
 ## 7. UI (design language per M1.5/§8)
 
-- Module nav: **Calendar becomes enabled** (`Module::Calendar` wired in `src/app.rs` like Email). Placeholder removed.
-- **Default = dashboard**: top strip lists next 5 upcoming occurrences (date chip, time or "All day", title, location) as compact cards (`ui::card_frame`); beneath it the week grid (7 day columns, all-day band on top, timed blocks stacked by hour, now-line). If window height is short the whole column scrolls — upcoming strip scrolls away, week stays reachable. View switcher (segmented control, palette semantics): Dashboard / Week / Upcoming. Month: stretch only.
-- Event rendering: color-dot per `color_idx` (same 6-color cycle as account/group dots), title, time range; all-day events sit in the day-band, multi-day spilling across columns. Past occurrences render dimmed via existing palette weak/text-dim colors — no new literals.
-- Event form (modal): title, location, description; timed/all-day toggle (all-day swaps datetime pickers for date pickers); TZ picker (IANA dropdown, default system TZ, "floating" not offered); recurrence section (frequency/interval/by-day/until/count, "Custom" collapses to RRULE text shown read-only); attendees (name+email rows, RSVP select); reminders (offset rows + add); color tag. Save primary / Cancel ghost / Trash (danger ghost, existing pattern).
-- Event click → detail card in pane: fields, linked entities (existing link layer UI patterns — todo/email pickers gain calendar entries), "Link reminder to…" via link picker (relation vocabulary: reminders link to todos/emails with existing relations, e.g. `scheduled_as`/`mentions`).
-- F1 overlay additions for calendar shortcuts. Empty states designed (`ui::empty_state`). All colors from palette; zero new color literals; painter icons from `ui::icons` only — never font glyphs.
+Normative post-M3.6 (UX overhaul Phases 1-4 implemented 2026-10-01; this
+section reflects the SHIPPED interactions, not the original sketch).
+
+- Module nav: **Calendar enabled** (`Module::Calendar` wired in `src/app.rs`).
+- **Header (all views)**: view switcher Dashboard / Week / Month / Upcoming
+  (segmented control, palette semantics; selection persisted to the
+  `calendar_view` setting); a Trash toggle opening the Trash panel; and
+  period navigation — ‹ / Today / › + a strong period label. Stepping is
+  view-aware: Week/Dashboard ±7 days, Month ±1 calendar month (day-clamped),
+  `T` = today, ←/→ also step.
+- **Dashboard**: upcoming-5 strip (date chip, time or "All day", title,
+  location; compact `ui::card_frame` cards) pinned OUTSIDE the week scroll —
+  the strip stays put, the week grid scrolls beneath it.
+- **Week grid**: 44px time gutter (hour labels, `SIZE_SMALL` muted) + 7
+  equal day columns (0.5px separators) at a fixed 48px/hour, all inside ONE
+  vertical ScrollArea (first frame scrolls 08:00 to the top, instantly).
+  Hour lines span the full grid; the now-line spans gutter→right edge when
+  today is in view. Hovering a column shows a translucent 30-minute ghost
+  slot + time label (painter). **Click** empty grid → event form prefilled
+  with that slot (start = slot, end = +60min clamped 23:59); **vertical
+  drag** ≥15min → form prefilled with the dragged range (both ends snapped
+  to 30min; shorter drags = click at the press point). All-day band (fixed,
+  above the scroll): chips per day, overflow collapses to muted "+n"; click
+  → all-day form preset for that date.
+- **Month view**: 6×7 Monday-first grid filling available space (ScrollArea
+  wrap if cells would drop below 64px). Day-of-week headers and day numbers
+  are real widgets (clickable); today gets accent number + hairline border;
+  adjacent-month days muted. Up to 3 chips per cell (all-day first, then
+  timed by start; multi-day all-day shows on every covered day), overflow
+  "+n more" (display-only). Empty-cell click drills into that week (Week
+  view, anchor = that date).
+- Event rendering: color-dot per `color_idx` (6-color cycle), title, time
+  range; all-day events sit in bands; past occurrences dimmed. Painter-drawn
+  blocks/chips are kittest-invisible by design; day numbers and headers are
+  real widgets for testability.
+- **Event form** (modal): title, location, description; timed/all-day toggle;
+  date fields carry the **mini date picker** (`ui::date_picker`: calendar
+  icon toggle → month-grid popup, ‹ › month stepping, today accented,
+  selected day highlighted, click writes `YYYY-MM-DD`); TZ picker (IANA
+  dropdown, system default); recurrence section (frequency/interval/by-day/
+  until/count); attendees; reminders (offset rows); color tag (6-dot cycle).
+  Save primary / Cancel ghost / Trash → moves to Trash panel. Recurring
+  events offer This / This-and-future / Entire-series (spec §5).
+- **Trash panel**: replaces the main view; trashed events as cards (title,
+  dates, trashed-at) with hover-reveal Restore / Delete; Delete-forever uses
+  the confirm modal pattern. Esc or re-click exits; 30-day purge unchanged.
+- Event click (week block, month chip) → the event form prefilled with that
+  occurrence (recurring events default to This-occurrence scope). Linked
+  entities show via todo/email link pickers (`scheduled_as`/`mentions`).
+- F1 overlay lists calendar shortcuts. Empty states designed
+  (`ui::empty_state`). All colors from palette; zero new color literals;
+  painter icons from `ui::icons` only — never font glyphs.
 
 ## 8. Edge cases
 

@@ -47,8 +47,13 @@ Local-only calendar: timed + all-day events, weekly/monthly/yearly
 recurrence (hand-rolled RRULE subset — expand-in-TZ-wall-clock, store UTC,
 DST-correct), per-occurrence edits (this / this-and-future series split /
 entire series), attendees, reminders, color tags, `scheduled_as` links to
-todos. Views: Dashboard (upcoming strip over the week grid), Week
-(all-day band, now-line, past-dimmed), Upcoming list. Reminders are
+todos. Views: Dashboard (upcoming-5 strip pinned over the scrolling week
+grid), Week (time gutter, 30-min hover slots, click or drag on the
+grid to create, all-day band, now-line, past-dimmed), Month (6×7
+Monday-first grid, drill into a week by clicking a day), Upcoming
+list. Period nav (week/month stepping, Today) + Trash panel in the
+header; the selected view persists. Date fields carry a mini
+month-grid date picker (shared `ui::date_picker` widget). Reminders are
 app-session, tick-driven (~15s): due reminders fire a desktop
 notification (notify-rust over session dbus — a missing daemon is logged
 and swallowed, never fatal) plus an in-app banner with Dismiss /
