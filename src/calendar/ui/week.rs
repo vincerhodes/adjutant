@@ -77,6 +77,9 @@ fn day_column(
 
         let column_rect =
             ui.allocate_exact_size(egui::vec2(width, ALLDAY_BAND_H + grid_h), Sense::click());
+        let column_response = column_rect
+            .1
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
 
         if ui.is_rect_visible(column_rect.0) {
             let painter = ui.painter_at(column_rect.0);
@@ -191,7 +194,7 @@ fn day_column(
         }
 
         // Click empty column space → new event that day.
-        if column_rect.1.clicked() {
+        if column_response.clicked() {
             calendar.form = Some(super::event_form::EventForm::new(Some(date), None));
         }
     });

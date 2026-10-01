@@ -44,11 +44,19 @@ fn crud_and_title_fallback() {
 fn list_orders_pinned_first_then_updated_desc() {
     let db = mem_db();
     let store = ScratchStore::new(&db);
+    // The trigger writes millisecond-precision timestamps, so separate the
+    // mutations by >1ms to make the recency ordering unambiguous (humans
+    // can't click twice in one millisecond — only tests can).
+    let settle = || std::thread::sleep(std::time::Duration::from_millis(2));
     let a = store.create(&input("alpha")).unwrap();
+    settle();
     let b = store.create(&input("bravo")).unwrap();
+    settle();
     let c = store.create(&input("charlie")).unwrap();
+    settle();
     // Touch a so its updated_at is newest; pin c.
     store.update(a.id, "alpha edited").unwrap();
+    settle();
     store.set_pinned(c.id, true).unwrap();
 
     let ids: Vec<uuid::Uuid> = store.list().unwrap().into_iter().map(|p| p.id).collect();
@@ -58,10 +66,12 @@ fn list_orders_pinned_first_then_updated_desc() {
         "pinned first, then updated desc"
     );
 
-    // Unpinning returns c to the recency ordering.
+    // Unpinning returns c to the recency ordering — and c leads it,
+    // because the pin UPDATE bumped its updated_at past a's edit (the
+    // trigger stamps any update; touching a pad floats it up).
     store.set_pinned(c.id, false).unwrap();
     let ids: Vec<uuid::Uuid> = store.list().unwrap().into_iter().map(|p| p.id).collect();
-    assert_eq!(ids, vec![a.id, c.id, b.id]);
+    assert_eq!(ids, vec![c.id, a.id, b.id]);
 }
 
 #[test]

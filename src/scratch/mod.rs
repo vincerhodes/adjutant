@@ -7,7 +7,7 @@
 pub mod model;
 pub mod ui;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
@@ -52,7 +52,7 @@ impl<'a> ScratchStore<'a> {
     pub fn create(&self, input: &ScratchPadInput) -> Result<ScratchPad> {
         validate_input(input)?;
         let id = Uuid::new_v4();
-        let now = Utc::now().to_rfc3339();
+        let now = now_ms();
         self.conn().execute(
             "INSERT INTO scratch_notes (id, body, pinned, color_idx, created_at, updated_at)
              VALUES (?1,?2,?3,?4,?5,?5)",
@@ -113,7 +113,7 @@ impl<'a> ScratchStore<'a> {
             "SELECT id, body, pinned, color_idx, trashed_at, created_at, updated_at
              FROM scratch_notes
              WHERE trashed_at IS NULL
-             ORDER BY pinned DESC, updated_at DESC",
+             ORDER BY pinned DESC, updated_at DESC, rowid DESC",
         )?;
         let rows = stmt.query_map([], map_pad_row)?;
         collect(rows)
@@ -125,7 +125,7 @@ impl<'a> ScratchStore<'a> {
             "SELECT id, body, pinned, color_idx, trashed_at, created_at, updated_at
              FROM scratch_notes
              WHERE trashed_at IS NOT NULL
-             ORDER BY trashed_at DESC",
+             ORDER BY trashed_at DESC, rowid DESC",
         )?;
         let rows = stmt.query_map([], map_pad_row)?;
         collect(rows)
@@ -145,7 +145,7 @@ impl<'a> ScratchStore<'a> {
     pub fn trash(&self, id: Uuid) -> Result<()> {
         let n = self.conn().execute(
             "UPDATE scratch_notes SET trashed_at = ?2 WHERE id = ?1",
-            params![id.to_string(), Utc::now().to_rfc3339()],
+            params![id.to_string(), now_ms()],
         )?;
         if n == 0 {
             return Err(ScratchError::NotFound(id.to_string()));
@@ -239,6 +239,12 @@ impl<'a> ScratchStore<'a> {
         }
         Ok(out)
     }
+}
+
+/// Now in the trigger's millisecond format — mixed formats break lexical
+/// ordering (nanosecond RFC3339 ties against strftime millis).
+fn now_ms() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 fn validate_input(input: &ScratchPadInput) -> Result<()> {

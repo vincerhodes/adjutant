@@ -8,7 +8,7 @@ pub mod icons;
 pub mod placeholder;
 pub mod theme;
 
-use egui::{Color32, Response, RichText, Stroke, Ui};
+use egui::{Color32, Response, Rgba, RichText, Stroke, Ui};
 
 use crate::todo::Priority;
 
@@ -29,24 +29,41 @@ pub fn empty_state(ui: &mut Ui, message: &str, hint: &str) {
     });
 }
 
-/// The one primary button style: accent fill, background-colored text.
+/// The one primary button style: accent fill, panel-colored text.
+/// Explicit paint — the previous visuals-mutation approach let the fill
+/// drop out under some themes; painting the rect directly cannot.
 pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     let accent = accent_of(ui);
     let text_color = ui.visuals().panel_fill;
-    ui.scope(|ui| {
-        let v = ui.visuals_mut();
-        v.widgets.inactive.bg_fill = accent;
-        v.widgets.inactive.weak_bg_fill = accent;
-        v.widgets.inactive.fg_stroke = Stroke::new(1.0, text_color);
-        v.widgets.hovered.bg_fill = accent;
-        v.widgets.hovered.weak_bg_fill = accent;
-        v.widgets.hovered.fg_stroke = Stroke::new(1.0, text_color);
-        v.widgets.active.bg_fill = accent;
-        v.widgets.active.weak_bg_fill = accent;
-        v.widgets.active.fg_stroke = Stroke::new(1.0, text_color);
-        ui.add(egui::Button::new(RichText::new(text).color(text_color)))
-    })
-    .inner
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+        .rect
+        .width();
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(text_width + 24.0, 26.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let fill = if response.is_pointer_button_down_on() {
+            egui::lerp(Rgba::from(accent)..=Rgba::from(Color32::BLACK), 0.08).into()
+        } else if response.hovered() {
+            egui::lerp(Rgba::from(accent)..=Rgba::from(Color32::WHITE), 0.10).into()
+        } else {
+            accent
+        };
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(6), fill);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            font,
+            text_color,
+        );
+    }
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text.to_owned()));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The one ghost button style: no fill, accent text, hover fill.
